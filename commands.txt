@@ -14,6 +14,7 @@ sort:
 
 samtools sort minitagged.bam minitagged_sorted.bam
 samtools index minitagged_sorted.bam
+samtools faidx fq.fq
 
 freebayes:
 
@@ -21,5 +22,5 @@ freebayes -f /data1/cellector/kmeans_pp/demuxlet_data/refdata-cellranger-GRCh38-
 
 vatrix:
 
-vartrix --umi --mapq 30 -b possorted_genome_bam.bam -c barcodes.tsv --scoring-method coverage --threads 8 --ref-matrix ref.mtx --out-matrix alt.mtx -v <freebayes vcf> --fasta fq.fq
+vartrix --umi --mapq 30 -b possorted_genome_bam.bam -c barcodes.tsv --scoring-method coverage --threads 64 --ref-matrix ref.mtx --out-matrix alt.mtx -v variants.vcf --fasta /data1/cellector/kmeans_pp/demuxlet_data/refdata-cellranger-GRCh38-3.0.0/fasta/genome.fa
 
