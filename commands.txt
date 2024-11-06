@@ -1,0 +1,25 @@
+rename:
+
+python ../souporcell_mod/renamer.py --bam possorted_genome_bam.bam --barcodes barcodes.tsv --out fq.fq
+
+minimap2:
+
+minimap2 -ax splice -t 64 -G50k -k 21 -w 11 --sr -A2 -B8 -O12,32 -E2,1 -r200 -p.5 -N20 -f1000,5000 -n2 -m20 -s40 -g2000 -2K50m --secondary=no /data1/cellector/kmeans_pp/demuxlet_data/refdata-cellranger-GRCh38-3.0.0/fasta/genome.fa fq.fq > minimap.sam
+
+retag:
+
+python retag.py --sam minimap.sam --out minitagged.bam
+
+sort:
+
+samtools sort minitagged.bam minitagged_sorted.bam
+samtools index minitagged_sorted.bam
+
+freebayes:
+
+freebayes -f /data1/cellector/kmeans_pp/demuxlet_data/refdata-cellranger-GRCh38-3.0.0/fasta/genome.fa -iXu -C 2 -q 20 -n 3 -E 1 -m 30 --min-coverage 6 --limit-coverage 100000 minitagged_sorted.bam
+
+vatrix:
+
+vartrix --umi --mapq 30 -b possorted_genome_bam.bam -c barcodes.tsv --scoring-method coverage --threads 8 --ref-matrix ref.mtx --out-matrix alt.mtx -v <freebayes vcf> --fasta fq.fq
+
