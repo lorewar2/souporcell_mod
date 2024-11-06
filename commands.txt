@@ -12,9 +12,8 @@ python retag.py --sam minimap.sam --out minitagged.bam
 
 sort:
 
-samtools sort minitagged.bam minitagged_sorted.bam
+samtools sort -o minitagged_sorted.bam minitagged.bam 
 samtools index minitagged_sorted.bam
-samtools faidx fq.fq
 
 freebayes:
 
@@ -23,4 +22,13 @@ freebayes -f /data1/cellector/kmeans_pp/demuxlet_data/refdata-cellranger-GRCh38-
 vatrix:
 
 vartrix --umi --mapq 30 -b possorted_genome_bam.bam -c barcodes.tsv --scoring-method coverage --threads 64 --ref-matrix ref.mtx --out-matrix alt.mtx -v variants.vcf --fasta /data1/cellector/kmeans_pp/demuxlet_data/refdata-cellranger-GRCh38-3.0.0/fasta/genome.fa
+
+souporcell:
+
+../souporcell_mod/souporcell/target/release/souporcell -a alt.mtx -r ref.mtx -b barcodes.tsv -k 4 -t 64 > clusters_tmp.tsv
+
+troublet:
+
+../souporcell_mod/troublet/target/release/troublet -a alt.mtx -r ref.mtx --clusters clusters_tmp.tsv > clusters.tsv
+
 
