@@ -68,7 +68,10 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
     }
     threads.par_iter_mut().for_each(|thread_data| {
         for iteration in 0..thread_data.solves_per_thread {
+            // the main steps here, multiple restarts with threads 
+            // INITIALIZING CLUSTERS
             let cluster_centers: Vec<Vec<f32>> = init_cluster_centers(loci_used, &cell_data, params, &mut thread_data.rng, &locus_to_index);
+            // EXPRECTATION MAXIMIZATION WITH TEMP ANNEALING
             let (log_loss, log_probabilities) = EM(loci_used, cluster_centers, &cell_data ,params, iteration, thread_data.thread_num);
             if log_loss > thread_data.best_total_log_probability {
                 thread_data.best_total_log_probability = log_loss;
@@ -342,6 +345,7 @@ fn init_cluster_centers_known_cells(loci: usize, cell_data: &Vec<CellData>, para
     Vec::new()
 }
 
+// TODO
 fn init_cluster_centers_kmeans_pp(loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
     assert!(false, "kmeans++ not yet implemented");
     Vec::new()
@@ -361,6 +365,7 @@ fn init_cluster_centers_uniform(loci: usize, params: &Params, rng: &mut StdRng) 
 fn init_cluster_centers_random_assignment(loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
     let mut sums: Vec<Vec<f32>> = Vec::new();
     let mut denoms: Vec<Vec<f32>> = Vec::new();
+    // put some random values in sums and 0.01 in denoms for each cluster
     for cluster in 0..params.num_clusters {
         sums.push(Vec::new());
         denoms.push(Vec::new());
@@ -369,12 +374,16 @@ fn init_cluster_centers_random_assignment(loci: usize, cell_data: &Vec<CellData>
             denoms[cluster].push(0.01);
         }
     }
+    // go through each cell
     for cell in cell_data {
+        // choose a random cluster
         let cluster = rng.gen_range(0,params.num_clusters);
+        // go thorugh the cell locations
         for locus in 0..cell.loci.len() {
             let alt_c = cell.alt_counts[locus] as f32;
             let total = alt_c + (cell.ref_counts[locus] as f32);
             let locus_index = cell.loci[locus];
+            // update sum and denoms for locus index
             sums[cluster][locus_index] += alt_c;
             denoms[cluster][locus_index] += total;
         }
