@@ -347,12 +347,13 @@ fn init_cluster_centers_known_cells(loci: usize, cell_data: &Vec<CellData>, para
 
 // TODO
 fn init_cluster_centers_kmeans_pp(loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
+    let mut original_centers: Vec<Vec<f32>> = vec![];
     // new cluster centers with alpha and beta // initialize with ones?
     let mut centers: Vec<Vec<(f32, f32)>> = vec![vec![(1, 1); loci]; params.num_clusters];
     // select a random cell and update the first cluster center with its ref and alt
     let first_cluster_cell = cell_data.get(rng.gen_range(0, cell_data.len())).unwrap();
     update_cluster_using_cell(first_cluster_cell, &mut centers, 0);
-    for current_cluster_index in 1..params.num_clusters {
+    for current_cluster_index in 1..params.num_clusters + 1 {
         // calculate the Beta-Binomial loss from each cell to the nearest center
         let mut loss_vec: Vec<f32> = vec![];
         let mut preferred_cluster: Vec<usize> = vec![]; //for assigning each cell after cluster selection ends
@@ -368,27 +369,65 @@ fn init_cluster_centers_kmeans_pp(loci: usize, cell_data: &Vec<CellData>, params
             loss_vec.push(min_loss_index.0);
             preferred_cluster.push(min_loss_index.1);
         }
-        // get sum and divide
-        let loss_sum: f32 = loss_vec.iter().sum();
-        for value in loss_vec.iter_mut() {
-            *value /= loss_sum;
-        }
-        // get a random value between 0 and 1
-        let r: f64 = rng.gen();
-        let mut cumulative_probability = 0.0;
-        for (selected_cell, &probability) in cell_data.iter().zip(loss_vec.iter()) {
-            cumulative_probability += probability;
-            if r < cumulative_probability {
-                // the selected cell, update the current_cluster_index
-                update_cluster_using_cell(selected_cell, &mut centers, current_cluster_index);
-                break;
+        // select the cell as cluster center
+        if current_cluster_index < params.num_clusters {
+            // get sum and divide
+            let loss_sum: f32 = loss_vec.iter().sum();
+            for value in loss_vec.iter_mut() {
+                *value /= loss_sum;
+            }
+            // get a random value between 0 and 1
+            let r: f64 = rng.gen();
+            let mut cumulative_probability = 0.0;
+            for (selected_cell, &probability) in cell_data.iter().zip(loss_vec.iter()) {
+                cumulative_probability += probability;
+                if r < cumulative_probability {
+                    // the selected cell, update the current_cluster_index
+                    update_cluster_using_cell(selected_cell, &mut centers, current_cluster_index);
+                    break;
+                }
             }
         }
+        // using the preferred_cluster for each cell on the final iteration, make the original cluster centers, 
+        // known cell assignment
+        else {
+            // Conversion code
+            let mut sums: Vec<Vec<f32>> = Vec::new();
+            let mut denoms: Vec<Vec<f32>> = Vec::new();
+            // put some random values in sums and 0.01 in denoms for each cluster
+            for cluster in 0..params.num_clusters {
+                sums.push(Vec::new());
+                denoms.push(Vec::new());
+                for _ in 0..loci {
+                    sums[cluster].push(rng.gen::<f32>()*0.01);
+                    denoms[cluster].push(0.01);
+                }
+            }
+            // go through each cell
+            for (index, cell) in cell_data.iter().enumerate() {
+                // choose the preferred
+                //let cluster = rng.gen_range(0,params.num_clusters);
+                let cluster = preferred_cluster[index];
+                // go thorugh the cell locations
+                for locus in 0..cell.loci.len() {
+                    let alt_c = cell.alt_counts[locus] as f32;
+                    let total = alt_c + (cell.ref_counts[locus] as f32);
+                    let locus_index = cell.loci[locus];
+                    // update sum and denoms for locus index
+                    sums[cluster][locus_index] += alt_c;
+                    denoms[cluster][locus_index] += total;
+                }
+            }
+            for cluster in 0..params.num_clusters {
+                for locus in 0..loci {
+                    sums[cluster][locus] = sums[cluster][locus]/denoms[cluster][locus] + (rng.gen::<f32>()/2.0 - 0.25);
+                    sums[cluster][locus] = sums[cluster][locus].min(0.9999).max(0.0001);
+                }
+            }
+            original_centers = sums;
+        }
     }
-    // Run through the cells and see which cluster centers has the min loss, then convert to original cluster center structure using this data
-    // ...
-    // Do this
-    Vec::new()
+    original_centers
 }
 
 // Update the cluster based on the cell data
