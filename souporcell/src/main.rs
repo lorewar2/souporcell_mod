@@ -347,8 +347,72 @@ fn init_cluster_centers_known_cells(loci: usize, cell_data: &Vec<CellData>, para
 
 // TODO
 fn init_cluster_centers_kmeans_pp(loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
-    assert!(false, "kmeans++ not yet implemented");
+    // new cluster centers with alpha and beta // initialize with ones?
+    let mut centers: Vec<Vec<(f32, f32)>> = vec![vec![(1, 1); loci]; params.num_clusters];
+    // select a random cell and update the first cluster center with its ref and alt
+    let first_cluster_cell = cell_data.get(rng.gen_range(0, cell_data.len())).unwrap();
+    update_cluster_using_cell(first_cluster_cell, &mut centers, 0);
+    for current_cluster_index in 1..params.num_clusters {
+        // calculate the Beta-Binomial loss from each cell to the nearest center
+        let mut loss_vec: Vec<f32> = vec![];
+        let mut preferred_cluster: Vec<usize> = vec![]; //for assigning each cell after cluster selection ends
+        // go through all the known centers which is 0..current_cluster_index and get the min loss one for each cell
+        for current_cell in cell_data {
+            let mut min_loss_index: (f32, usize) = (f32::MAX, 0);
+            for loop_2_current_cluster_index in 0..current_cluster_index {
+                let loss = beta_binomial_loss(current_cell, &centers[loop_2_current_cluster_index]);
+                if loss < min_loss_index.0 {
+                    min_loss_index = (loss, loop_2_current_cluster_index);
+                }
+            }
+            loss_vec.push(min_loss_index.0);
+            preferred_cluster.push(min_loss_index.1);
+        }
+        // get sum and divide
+        let loss_sum: f32 = loss_vec.iter().sum();
+        for value in loss_vec.iter_mut() {
+            *value /= loss_sum;
+        }
+        // get a random value between 0 and 1
+        let r: f64 = rng.gen();
+        let mut cumulative_probability = 0.0;
+        for (selected_cell, &probability) in cell_data.iter().zip(loss_vec.iter()) {
+            cumulative_probability += probability;
+            if r < cumulative_probability {
+                // the selected cell, update the current_cluster_index
+                update_cluster_using_cell(selected_cell, &mut centers, current_cluster_index);
+                break;
+            }
+        }
+    }
+    // Run through the cells and see which cluster centers has the min loss, then convert to original cluster center structure using this data
+    // ...
+    // Do this
     Vec::new()
+}
+
+// Update the cluster based on the cell data
+fn update_cluster_using_cell(cell_data: &CellData, cluster_centers: &mut Vec<Vec<(f32, f32)>>, cluster_index: usize) {
+    for (locus_index, locus) in cell_data.loci.iter().enumerate() {
+        cluster_centers[cluster_index][*locus].0 += cell_data.alt_counts[locus_index] as f32;;
+        cluster_centers[cluster_index][*locus].1 += cell_data.ref_counts[locus_index] as f32;
+    }
+}
+// Beta binomial function to take the loss between a cluster center and a cell
+fn beta_binomial_loss(cell_data: &CellData, cluster_center: &Vec<(f32, f32)>) -> f32 {
+    let mut log_probability: f32 = 0;
+    for (locus_index, locus) in cell_data.loci.iter().enumerate() {
+        let center_locus_alpha = cluster_center[*locus].0;
+        let center_locus_beta = cluster_center[*locus].1;
+        let cell_locus_bino_coeff = cell_data.log_binomial_coefficient[locus_index];
+        let cell_locus_ref = cell_data.ref_counts[locus_index] as f32;
+        let cell_locus_alt = cell_data.alt_counts[locus_index] as f32;
+        let log_loss_locus = cell_locus_bino_coeff
+                        + beta::ln_beta(cell_locus_ref + center_locus_alpha, cell_locus_alt + center_locus_beta)
+                        - beta::ln_beta(center_locus_alpha,center_locus_beta);
+        log_probability += log_loss_locus;
+    }
+    log_probability
 }
 
 fn init_cluster_centers_uniform(loci: usize, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
