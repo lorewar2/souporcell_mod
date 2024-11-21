@@ -8,7 +8,7 @@ minimap2 -ax splice -t 64 -G50k -k 21 -w 11 --sr -A2 -B8 -O12,32 -E2,1 -r200 -p.
 
 retag:
 
-python retag.py --sam minimap.sam --out minitagged.bam
+python ../souporcell_mod/retag.py --sam minimap.sam --out minitagged.bam
 
 sort:
 
