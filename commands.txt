@@ -1,6 +1,6 @@
 rename:
 
-python ../souporcell_mod/renamer.py --bam possorted_genome_bam.bam --barcodes barcodes.tsv --out fq.fq
+python -u ../souporcell_mod/renamer.py --bam merged.sorted.bam --barcodes barcodes.tsv --out fq.fq
 
 minimap2:
 
@@ -17,7 +17,7 @@ samtools index minitagged_sorted.bam
 
 freebayes:
 
-freebayes -f /data1/cellector/kmeans_pp/demuxlet_data/refdata-cellranger-GRCh38-3.0.0/fasta/genome.fa -iXu -C 2 -q 20 -n 3 -E 1 -m 30 --min-coverage 6 --limit-coverage 100000 minitagged_sorted.bam
+freebayes -f /data1/cellector/kmeans_pp/demuxlet_data/refdata-cellranger-GRCh38-3.0.0/fasta/genome.fa -iXu -C 2 -q 20 -n 3 -E 1 -m 30 --min-coverage 6 --limit-coverage 100000 minitagged_sorted.bam > variants.vcf
 
 vatrix:
 
