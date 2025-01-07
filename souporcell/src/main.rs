@@ -346,7 +346,7 @@ fn init_cluster_centers_known_cells(loci: usize, cell_data: &Vec<CellData>, para
     Vec::new()
 }
 
-// TODO
+// Done for now
 fn init_cluster_centers_kmeans_pp(loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
     let mut original_centers: Vec<Vec<f32>> = vec![];
     // new cluster centers with alpha and beta // initialize with ones?
@@ -431,89 +431,32 @@ fn init_cluster_centers_kmeans_pp(loci: usize, cell_data: &Vec<CellData>, params
     original_centers
 }
 
-// follow the paper 
-fn init_cluster_centers_kmeans_pp_2 (loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
+// follow the paper kmeans subsampling init method https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=3b4b6b3b6f13f2de00a213a822e7c005e034adae
+fn init_cluster_centers_kmeans_subsample (loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
+    let sub_sample_count = 10;
+    let mut aggregated_cluster_centers = vec![];
     let mut original_centers: Vec<Vec<f32>> = vec![];
-    // new cluster centers with alpha and beta // initialize with ones?
-    let mut centers: Vec<Vec<(f32, f32)>> = vec![vec![(1.0, 1.0); loci]; params.num_clusters];
-    // select a random cell and update the first cluster center with its ref and alt
-    let first_cluster_cell = cell_data.get(rng.gen_range(0, cell_data.len())).unwrap();
-    update_cluster_using_cell(first_cluster_cell, &mut centers, 0);
-    for current_cluster_index in 1..params.num_clusters + 1 {
-        // calculate the Beta-Binomial loss from each cell to the nearest center
-        let mut loss_vec: Vec<f32> = vec![];
-        let mut preferred_cluster: Vec<usize> = vec![]; //for assigning each cell after cluster selection ends
-        // go through all the known centers which is 0..current_cluster_index and get the min loss one for each cell
-        for current_cell in cell_data {
-            let mut min_loss_index: (f32, usize) = (f32::MAX, 0);
-            for loop_2_current_cluster_index in 0..current_cluster_index {
-                let loss = beta_binomial_loss(current_cell, &centers[loop_2_current_cluster_index]);
-                if loss < min_loss_index.0 {
-                    min_loss_index = (loss, loop_2_current_cluster_index);
-                }
-            }
-            loss_vec.push(min_loss_index.0);
-            preferred_cluster.push(min_loss_index.1);
-        }
-        // select the cell as cluster center
-        if current_cluster_index < params.num_clusters {
-            // get sum and divide
-            let loss_sum: f32 = loss_vec.iter().sum();
-            for value in loss_vec.iter_mut() {
-                *value /= loss_sum;
-            }
-            // get a random value between 0 and 1
-            let r: f32 = rng.gen();
-            let mut cumulative_probability = 0.0;
-            for (selected_cell, &probability) in cell_data.iter().zip(loss_vec.iter()) {
-                cumulative_probability += probability;
-                if r < cumulative_probability {
-                    // the selected cell, update the current_cluster_index
-                    update_cluster_using_cell(selected_cell, &mut centers, current_cluster_index);
-                    break;
-                }
-            }
-        }
-        // using the preferred_cluster for each cell on the final iteration, make the original cluster centers, 
-        // known cell assignment
-        else {
-            // Conversion code
-            let mut sums: Vec<Vec<f32>> = Vec::new();
-            let mut denoms: Vec<Vec<f32>> = Vec::new();
-            // put some random values in sums and 0.01 in denoms for each cluster
-            for cluster in 0..params.num_clusters {
-                sums.push(Vec::new());
-                denoms.push(Vec::new());
-                for _ in 0..loci {
-                    sums[cluster].push(rng.gen::<f32>()*0.01);
-                    denoms[cluster].push(0.01);
-                }
-            }
-            // go through each cell
-            for (index, cell) in cell_data.iter().enumerate() {
-                // choose the preferred
-                //let cluster = rng.gen_range(0,params.num_clusters);
-                let cluster = preferred_cluster[index];
-                // go thorugh the cell locations
-                for locus in 0..cell.loci.len() {
-                    let alt_c = cell.alt_counts[locus] as f32;
-                    let total = alt_c + (cell.ref_counts[locus] as f32);
-                    let locus_index = cell.loci[locus];
-                    // update sum and denoms for locus index
-                    sums[cluster][locus_index] += alt_c;
-                    denoms[cluster][locus_index] += total;
-                }
-            }
-            for cluster in 0..params.num_clusters {
-                for locus in 0..loci {
-                    sums[cluster][locus] = sums[cluster][locus]/denoms[cluster][locus] + (rng.gen::<f32>()/2.0 - 0.25);
-                    sums[cluster][locus] = sums[cluster][locus].min(0.9999).max(0.0001);
-                }
-            }
-            original_centers = sums;
-        }
-    }
+    // subsample the cell data j times (j subsamples  from cell_data)
+
+    // do kmeans mod with the subsampled data and get the cluster centers and aggregated cluster centers
+
+    // use the aggregated cluster centers and cluster centers as starting point to get FM using kmeans
+
+    // find the distance in each FM and aggregated cluster centers, find the one with minimimum distance
+
+    // use that FM as the cluster centers, return it
+
+    
     original_centers
+}
+
+// kmeans mod function to get the without empty cluster centers
+fn kmeans_mod () {
+
+}
+// normal kmeans
+fn kmeans_normal () {
+
 }
 
 // Update the cluster based on the cell data
