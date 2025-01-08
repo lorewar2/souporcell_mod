@@ -110,6 +110,85 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
 
 }
 
+fn EM_return_cluster_centers (loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>, Vec<Vec<f32>>) {
+    let mut sums: Vec<Vec<f32>> = Vec::new();
+    let mut denoms: Vec<Vec<f32>> = Vec::new();
+    for cluster in 0..params.num_clusters {
+        sums.push(Vec::new());
+        denoms.push(Vec::new());
+        for index in 0..loci {
+            sums[cluster].push(1.0);
+            denoms[cluster].push(2.0); // psuedocounts
+        }
+    }
+
+    let log_prior: f32 = (1.0/(params.num_clusters as f32)).ln();
+
+    let mut change = 1000.0;
+    let mut iterations = 0;
+    //let mut cell_probabilities: Vec<Vec<f32>> = Vec::new();
+    //for _cell in cell_data {
+    //    cell_probabilities.push(Vec::new());
+    //}
+    let mut total_log_loss = f32::NEG_INFINITY;
+    let mut total_log_loss_binom = f32::NEG_INFINITY;
+    let mut final_log_probabilities = Vec::new();
+    for _cell in 0..cell_data.len() {
+        final_log_probabilities.push(Vec::new());
+    }
+    let log_loss_change_limit = 0.01*(cell_data.len() as f32);
+    let temp_steps = 9;
+    let mut last_log_loss = f32::NEG_INFINITY;
+    for temp_step in 0..temp_steps {
+        //eprintln!("temp step {}",temp_step);
+        let mut log_loss_change = 10000.0;
+        //let mut cluster_cells_weighted: Vec<f32> = Vec::new();
+        //for cluster in 0..params.num_clusters { cluster_cells_weighted.push(0.0); }
+        while (log_loss_change > log_loss_change_limit && iterations < 1000) {
+            //for cluster in 0..params.num_clusters { cluster_cells_weighted[cluster] = 0.0; } 
+            //let mut log_loss = 0.0;
+            let mut log_binom_loss = 0.0;
+            reset_sums_denoms(loci, &mut sums, &mut denoms, &cluster_centers, params.num_clusters);
+            for (celldex, cell) in cell_data.iter().enumerate() {
+                //let log_probabilities = sum_of_squares_loss(cell, &cluster_centers, log_prior, celldex);
+                let log_binoms = binomial_loss(cell, &cluster_centers, log_prior, celldex);
+                log_binom_loss += log_sum_exp(&log_binoms);
+                //eprintln!("cell {} loci {} total_alleles {}", celldex, cell.loci.len(), cell.total_alleles);
+                //log_loss += log_sum_exp(&log_binoms);
+                let mut temp = (cell.total_alleles/(20.0 * 2.0f32.powf((temp_step as f32)))).max(1.0);
+                if temp_step == temp_steps - 1 { temp = 1.0; }
+                //if temp_step > 0 { temp = 1.0; }
+                let probabilities = normalize_in_log_with_temp(&log_binoms, temp);
+                //for cluster in 0..params.num_clusters { cluster_cells_weighted[cluster] += probabilities[cluster]; }
+                update_centers_average(&mut sums, &mut denoms, cell, &probabilities);
+            
+                //println!("normalized probabilities {:?}", probabilities);
+                //cell_probabilities[celldex] = probabilities;
+                final_log_probabilities[celldex] = log_binoms;//log_probabilities;
+            }
+
+            total_log_loss = log_binom_loss;
+            log_loss_change = log_binom_loss - last_log_loss;//log_loss - last_log_loss;
+            last_log_loss = log_binom_loss;//log_loss;
+
+            update_final(loci, &sums, &denoms, &mut cluster_centers);
+            iterations += 1;
+            eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\t{}", thread_num, epoch, iterations, temp_step, log_binom_loss, log_loss_change);//, cluster_cells_weighted);
+        }
+    }
+    //for (celldex, probabilities) in cell_probabilities.iter().enumerate() {
+    //    println!("cell {} with {} loci, cluster probabilities {:?}", celldex, cell_data[celldex].loci.len(), probabilities);
+    //}
+    //for center in 0..cluster_centers.len() {
+    //    for locus in 0..cluster_centers[0].len() {
+    //        println!("cluster {} locus {} {}", center, locus, cluster_centers[center][locus]);
+    //    }
+    //}
+    //println!("total log probability = {}",total_log_loss);
+
+    (total_log_loss, final_log_probabilities, cluster_centers)
+}
+
 fn EM(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>) {
     let mut sums: Vec<Vec<f32>> = Vec::new();
     let mut denoms: Vec<Vec<f32>> = Vec::new();
@@ -433,30 +512,41 @@ fn init_cluster_centers_kmeans_pp(loci: usize, cell_data: &Vec<CellData>, params
 
 // follow the paper kmeans subsampling init method https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=3b4b6b3b6f13f2de00a213a822e7c005e034adae
 fn init_cluster_centers_kmeans_subsample (loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
-    let sub_sample_count = 10;
+    let sub_sampling_attempts: usize = 10;
+    let sub_samples_to_get = cell_data.len() * (10 / 100);
     let mut aggregated_cluster_centers = vec![];
     let mut original_centers: Vec<Vec<f32>> = vec![];
     // subsample the cell data j times (j subsamples  from cell_data)
+    for sub_sample_attempt in 0..sub_sampling_attempts {
+        // select random cells
+        let selected_cells: Vec<_> = cell_data.choose_multiple(&mut rng, num_to_select).cloned().collect();
+        // get random cluster centers using selected cells
+        let cluster_centers = init_cluster_centers_uniform(loci, params, rng);
+        // EM with initial cluster centers 
+        let (_, _, final_cluster_centers) = EM_return_cluster_centers (loci, cluster_centers, &selected_cells, params, 0, 0);
+        // convert the cluster centers to cell data
+        for cluster_center in final_cluster_centers {
+            let temp_cell_data: CellData = CellData{
+                log_binomial_coefficient: vec![],
+                allele_fractions: vec![],
+                alt_counts: vec![],
+                ref_counts: vec![],
+                loci: vec![], 
+                total_alleles: vec![]
+            };
+            for loci in 0..cluster_center.len() {
+                let value = cluster_center[loci];
+                let alt_count = ((value as usize) * 10) as usize;
+                let ref_count = 10 - alt;
 
-    // do kmeans mod with the subsampled data and get the cluster centers and aggregated cluster centers
+            }
+        }
+    }
+    // rerun em using the collected cell data and cluster centers as cluster centers then get the one with best loss (min)
+    for sub_sample_attempt in 0..sub_sampling_attempts {
 
-    // use the aggregated cluster centers and cluster centers as starting point to get FM using kmeans
-
-    // find the distance in each FM and aggregated cluster centers, find the one with minimimum distance
-
-    // use that FM as the cluster centers, return it
-
-    
+    }
     original_centers
-}
-
-// kmeans mod function to get the without empty cluster centers
-fn kmeans_mod () {
-
-}
-// normal kmeans
-fn kmeans_normal () {
-
 }
 
 // Update the cluster based on the cell data
