@@ -18,6 +18,7 @@ use rayon::prelude::*;
 use rand::Rng;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rand::seq::IteratorRandom;
 
 use clap::App;
 use std::f32;
@@ -521,20 +522,20 @@ fn init_cluster_centers_kmeans_subsample(loci: usize, cell_data: &Vec<CellData>,
     // subsample the cell data j times (j subsamples  from cell_data)
     for sub_sample_attempt in 0..sub_sampling_attempts {
         // select random cells
-        let selected_cells: Vec<_> = cell_data.iter().choose_multiple(&mut rng, sub_samples_to_get).cloned().collect();
+        let selected_cells: Vec<_> = cell_data.iter().choose_multiple(rng, sub_samples_to_get).into_iter().cloned().collect();
         // get random cluster centers using selected cells
         let cluster_centers = init_cluster_centers_uniform(loci, params, rng);
-        // EM with initial cluster centers 
+        // EM with initial cluster centers
         let (_, _, final_cluster_centers) = EM_return_cluster_centers (loci, cluster_centers, &selected_cells, params, 0, 0);
         // convert the cluster centers to cell data
-        for cluster_center in final_cluster_centers {
-            let temp_cell_data: CellData = CellData{
+        for cluster_center in &final_cluster_centers {
+            let mut temp_cell_data: CellData = CellData{
                 log_binomial_coefficient: vec![],
                 allele_fractions: vec![],
                 alt_counts: vec![],
                 ref_counts: vec![],
-                loci: vec![], 
-                total_alleles: 0
+                loci: vec![],
+                total_alleles: 0.0
             };
             for loci in 0..cluster_center.len() {
                 // make all the required stuff for the current cell data
@@ -556,7 +557,7 @@ fn init_cluster_centers_kmeans_subsample(loci: usize, cell_data: &Vec<CellData>,
                 temp_cell_data.total_alleles += (ref_count + alt_count) as f32;
             }
             cluster_centers_as_cell.push(temp_cell_data);
-            
+
         }
         aggregated_cluster_centers.push(final_cluster_centers);
     }
@@ -731,7 +732,7 @@ fn load_cell_data(params: &Params) -> (usize, usize, Vec<CellData>, Vec<usize>, 
     
     (used_loci.len(), total_cells, cell_data, index_to_locus, locus_to_index)
 }
-
+#[derive(Clone)]
 struct CellData {
     allele_fractions: Vec<f32>,
     log_binomial_coefficient: Vec<f32>,
