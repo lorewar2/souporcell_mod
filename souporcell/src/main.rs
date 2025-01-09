@@ -521,7 +521,7 @@ fn init_cluster_centers_kmeans_subsample(loci: usize, cell_data: &Vec<CellData>,
     // subsample the cell data j times (j subsamples  from cell_data)
     for sub_sample_attempt in 0..sub_sampling_attempts {
         // select random cells
-        let selected_cells: Vec<_> = cell_data.choose_multiple(&mut rng, num_to_select).cloned().collect();
+        let selected_cells: Vec<_> = cell_data.iter().choose_multiple(&mut rng, sub_samples_to_get).cloned().collect();
         // get random cluster centers using selected cells
         let cluster_centers = init_cluster_centers_uniform(loci, params, rng);
         // EM with initial cluster centers 
@@ -534,7 +534,7 @@ fn init_cluster_centers_kmeans_subsample(loci: usize, cell_data: &Vec<CellData>,
                 alt_counts: vec![],
                 ref_counts: vec![],
                 loci: vec![], 
-                total_alleles: vec![]
+                total_alleles: 0
             };
             for loci in 0..cluster_center.len() {
                 // make all the required stuff for the current cell data
@@ -545,10 +545,10 @@ fn init_cluster_centers_kmeans_subsample(loci: usize, cell_data: &Vec<CellData>,
                 }
                 let mut ref_count: usize = 1;
                 if alt_count < 10 {
-                    ref_count = 10 - alt;
+                    ref_count = 10 - alt_count;
                 }
-                temp_cell_data.alt_counts.push(alt_count);
-                temp_cell_data.ref_counts.push(ref_count);
+                temp_cell_data.alt_counts.push(alt_count as u32);
+                temp_cell_data.ref_counts.push(ref_count as u32);
                 temp_cell_data.loci.push(loci);
                 temp_cell_data.allele_fractions.push((alt_count as f32)/((ref_count + alt_count) as f32));
                 temp_cell_data.log_binomial_coefficient.push(
