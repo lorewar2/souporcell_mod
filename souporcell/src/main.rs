@@ -22,6 +22,7 @@ use rand::SeedableRng;
 use clap::App;
 use std::f32;
 
+use std::f32::MIN;
 use std::ffi::OsStr;
 use std::io::Read;
 use std::fs::File;
@@ -369,6 +370,7 @@ fn init_cluster_centers(loci_used: usize, cell_data: &Vec<CellData>, params: &Pa
     } else {
         match params.initialization_strategy {
             ClusterInit::KmeansPP => init_cluster_centers_kmeans_pp(loci_used, &cell_data, params, rng),
+            ClusterInit::KmeansSS => init_cluster_centers_kmeans_subsample(loci_used, &cell_data, params, rng),
             ClusterInit::RandomUniform => init_cluster_centers_uniform(loci_used, params, rng),
             ClusterInit::RandomAssignment => init_cluster_centers_random_assignment(loci_used, &cell_data, params, rng),
             ClusterInit::MiddleVariance => init_cluster_centers_middle_variance(loci_used, &cell_data, params, rng),
@@ -511,11 +513,11 @@ fn init_cluster_centers_kmeans_pp(loci: usize, cell_data: &Vec<CellData>, params
 }
 
 // follow the paper kmeans subsampling init method https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=3b4b6b3b6f13f2de00a213a822e7c005e034adae
-fn init_cluster_centers_kmeans_subsample (loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
+fn init_cluster_centers_kmeans_subsample(loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
     let sub_sampling_attempts: usize = 10;
     let sub_samples_to_get = cell_data.len() * (10 / 100);
-    let mut aggregated_cluster_centers = vec![];
-    let mut original_centers: Vec<Vec<f32>> = vec![];
+    let mut aggregated_cluster_centers: Vec<Vec<Vec<f32>>> = vec![];
+    let mut cluster_centers_as_cell: Vec<CellData> = vec![];
     // subsample the cell data j times (j subsamples  from cell_data)
     for sub_sample_attempt in 0..sub_sampling_attempts {
         // select random cells
@@ -535,18 +537,41 @@ fn init_cluster_centers_kmeans_subsample (loci: usize, cell_data: &Vec<CellData>
                 total_alleles: vec![]
             };
             for loci in 0..cluster_center.len() {
+                // make all the required stuff for the current cell data
                 let value = cluster_center[loci];
-                let alt_count = ((value as usize) * 10) as usize;
-                let ref_count = 10 - alt;
-
+                let mut alt_count = 1;
+                if value > 1.0 {
+                    alt_count = ((value as usize) * 10) as usize;
+                }
+                let mut ref_count: usize = 1;
+                if alt_count < 10 {
+                    ref_count = 10 - alt;
+                }
+                temp_cell_data.alt_counts.push(alt_count);
+                temp_cell_data.ref_counts.push(ref_count);
+                temp_cell_data.loci.push(loci);
+                temp_cell_data.allele_fractions.push((alt_count as f32)/((ref_count + alt_count) as f32));
+                temp_cell_data.log_binomial_coefficient.push(
+                    statrs::function::factorial::ln_binomial((ref_count + alt_count) as u64, alt_count as u64) as f32);
+                temp_cell_data.total_alleles += (ref_count + alt_count) as f32;
             }
+            cluster_centers_as_cell.push(temp_cell_data);
+            
         }
+        aggregated_cluster_centers.push(final_cluster_centers);
     }
     // rerun em using the collected cell data and cluster centers as cluster centers then get the one with best loss (min)
+    let mut best_loss = f32::MAX;
+    let mut best_cluster = vec![];
     for sub_sample_attempt in 0..sub_sampling_attempts {
-
+        let current_cluster_center = aggregated_cluster_centers[sub_sample_attempt].clone();
+        let (loss, _, final_cluster_centers) = EM_return_cluster_centers (loci, current_cluster_center, &cluster_centers_as_cell, params, 0, 0);
+        if best_loss > loss {
+            best_loss = loss;
+            best_cluster = final_cluster_centers.clone();
+        }
     }
-    original_centers
+    best_cluster
 }
 
 // Update the cluster based on the cell data
@@ -766,6 +791,7 @@ struct Params {
 #[derive(Clone)]
 enum ClusterInit {
     KmeansPP,
+    KmeansSS,
     RandomUniform,
     RandomAssignment,
     MiddleVariance,
@@ -808,12 +834,14 @@ fn load_params() -> Params {
         sample_names.push(name.to_string());
     }
 
-    let initialization_strategy = params.value_of("initialization_strategy").unwrap_or("random_uniform");
+    //let initialization_strategy = params.value_of("initialization_strategy").unwrap_or("random_uniform");
+    let initialization_strategy = params.value_of("initialization_strategy").unwrap_or("kmeans_sub");
     let initialization_strategy = match initialization_strategy {
         "kmeans++" => ClusterInit::KmeansPP,
         "random_uniform" => ClusterInit::RandomUniform,
         "random_cell_assignment" => ClusterInit::RandomAssignment,
         "middle_variance" => ClusterInit::MiddleVariance,
+        "kmeans_sub" => ClusterInit::KmeansSS,
         _ => {
             assert!(false, "initialization strategy must be one of kmeans++, random_uniform, random_cell_assignment, middle_variance");
             ClusterInit::RandomAssignment
