@@ -371,7 +371,7 @@ fn init_cluster_centers(loci_used: usize, cell_data: &Vec<CellData>, params: &Pa
     } else {
         match params.initialization_strategy {
             ClusterInit::KmeansPP => init_cluster_centers_kmeans_pp(loci_used, &cell_data, params, rng),
-            ClusterInit::KmeansSS => init_cluster_centers_kmeans_subsample(loci_used, &cell_data, params, rng),
+            ClusterInit::Overclustering => init_cluster_centers_overclustering(loci_used, &cell_data, params, rng),
             ClusterInit::RandomUniform => init_cluster_centers_uniform(loci_used, params, rng),
             ClusterInit::RandomAssignment => init_cluster_centers_random_assignment(loci_used, &cell_data, params, rng),
             ClusterInit::MiddleVariance => init_cluster_centers_middle_variance(loci_used, &cell_data, params, rng),
@@ -514,7 +514,40 @@ fn init_cluster_centers_kmeans_pp(loci: usize, cell_data: &Vec<CellData>, params
 }
 
 // follow the paper kmeans subsampling init method https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=3b4b6b3b6f13f2de00a213a822e7c005e034adae
-fn init_cluster_centers_kmeans_subsample(loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
+fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
+    // get 10_000 random clusters
+    let mut centers: Vec<Vec<(f32, f32)>> = vec![vec![(1.0, 1.0); loci]; 10_000];
+    // choose random 1000 cells and update the centers
+    for cluster_index in 0..10_000 {
+        let cluster_cell = cell_data.get(rng.gen_range(0, cell_data.len())).unwrap();
+        update_cluster_using_cell(cluster_cell, &mut centers, cluster_index);
+    }
+    let mut loss_vec: Vec<f32> = vec![];
+    let mut preferred_cluster: Vec<usize> = vec![]; 
+    for current_cell in cell_data {
+        let mut min_loss_index: (f32, usize) = (f32::MAX, 0);
+        for loop_2_current_cluster_index in 0..100_000 {
+            let loss = beta_binomial_loss(current_cell, &centers[loop_2_current_cluster_index]);
+            if loss < min_loss_index.0 {
+                min_loss_index = (loss, loop_2_current_cluster_index);
+            }
+        }
+        loss_vec.push(min_loss_index.0);
+        preferred_cluster.push(min_loss_index.1);
+    }
+    println!("{:?}", preferred_cluster);
+    //find the clusters which are closest to the cells
+    let mut centers: Vec<Vec<f32>> = Vec::new();
+    for cluster in 0..params.num_clusters {
+        centers.push(Vec::new());
+        for _ in 0..loci {
+            centers[cluster].push(rng.gen::<f32>().min(0.9999).max(0.0001));
+        }
+    }
+    centers
+}
+
+fn init_cluster_centers_ksubsampling(loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
     let sub_sampling_attempts: usize = 10;
     let sub_samples_to_get = cell_data.len() * (10 / 100);
     let mut aggregated_cluster_centers: Vec<Vec<Vec<f32>>> = vec![];
@@ -557,7 +590,6 @@ fn init_cluster_centers_kmeans_subsample(loci: usize, cell_data: &Vec<CellData>,
                 temp_cell_data.total_alleles += (ref_count + alt_count) as f32;
             }
             cluster_centers_as_cell.push(temp_cell_data);
-
         }
         aggregated_cluster_centers.push(final_cluster_centers);
     }
@@ -792,7 +824,7 @@ struct Params {
 #[derive(Clone)]
 enum ClusterInit {
     KmeansPP,
-    KmeansSS,
+    Overclustering,
     RandomUniform,
     RandomAssignment,
     MiddleVariance,
@@ -836,13 +868,13 @@ fn load_params() -> Params {
     }
 
     //let initialization_strategy = params.value_of("initialization_strategy").unwrap_or("random_uniform");
-    let initialization_strategy = params.value_of("initialization_strategy").unwrap_or("kmeans_sub");
+    let initialization_strategy = params.value_of("initialization_strategy").unwrap_or("overcluster");
     let initialization_strategy = match initialization_strategy {
         "kmeans++" => ClusterInit::KmeansPP,
         "random_uniform" => ClusterInit::RandomUniform,
         "random_cell_assignment" => ClusterInit::RandomAssignment,
         "middle_variance" => ClusterInit::MiddleVariance,
-        "kmeans_sub" => ClusterInit::KmeansSS,
+        "overcluster" => ClusterInit::Overclustering,
         _ => {
             assert!(false, "initialization strategy must be one of kmeans++, random_uniform, random_cell_assignment, middle_variance");
             ClusterInit::RandomAssignment
