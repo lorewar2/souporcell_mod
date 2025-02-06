@@ -18,6 +18,7 @@ use rayon::prelude::*;
 use rand::Rng;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rand::seq::SliceRandom;
 use rand::seq::IteratorRandom;
 
 use clap::App;
@@ -513,38 +514,128 @@ fn init_cluster_centers_kmeans_pp(loci: usize, cell_data: &Vec<CellData>, params
     original_centers
 }
 
-// follow the paper kmeans subsampling init method https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=3b4b6b3b6f13f2de00a213a822e7c005e034adae
+
 fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
-    // get 10_000 random clusters
-    let mut centers: Vec<Vec<(f32, f32)>> = vec![vec![(1.0, 1.0); loci]; 10_000];
-    // choose random 1000 cells and update the centers
-    for cluster_index in 0..10_000 {
-        let cluster_cell = cell_data.get(rng.gen_range(0, cell_data.len())).unwrap();
-        update_cluster_using_cell(cluster_cell, &mut centers, cluster_index);
-    }
-    let mut loss_vec: Vec<f32> = vec![];
-    let mut preferred_cluster: Vec<usize> = vec![]; 
-    for current_cell in cell_data {
-        let mut min_loss_index: (f32, usize) = (f32::MAX, 0);
-        for loop_2_current_cluster_index in 0..100_000 {
-            let loss = beta_binomial_loss(current_cell, &centers[loop_2_current_cluster_index]);
-            if loss < min_loss_index.0 {
-                min_loss_index = (loss, loop_2_current_cluster_index);
+    let mut original_centers: Vec<Vec<f32>> = vec![];
+    // get 500 cluster centers using kmeanspp
+    let mut centers: Vec<Vec<(f32, f32)>> = vec![vec![(1.0, 1.0); loci]; 500];
+    // select a random cell and update the first cluster center with its ref and alt
+    let first_cluster_cell = cell_data.get(rng.gen_range(0, cell_data.len())).unwrap();
+    update_cluster_using_cell(first_cluster_cell, &mut centers, 0);
+    for current_cluster_index in 1..500 + 1{
+        // calculate the Beta-Binomial loss from each cell to the nearest center
+        let mut loss_vec: Vec<f32> = vec![];
+        let mut preferred_cluster: Vec<usize> = vec![]; //for assigning each cell after cluster selection ends
+        // go through all the known centers which is 0..current_cluster_index and get the min loss one for each cell
+        for current_cell in cell_data {
+            let mut min_loss_index: (f32, usize) = (f32::MAX, 0);
+            for loop_2_current_cluster_index in 0..current_cluster_index {
+                let loss = beta_binomial_loss(current_cell, &centers[loop_2_current_cluster_index]);
+                if loss < min_loss_index.0 {
+                    min_loss_index = (loss, loop_2_current_cluster_index);
+                }
+            }
+            loss_vec.push(min_loss_index.0);
+            preferred_cluster.push(min_loss_index.1);
+        }
+        // select the cell as cluster center
+        if current_cluster_index < params.num_clusters {
+            // get sum and divide
+            let loss_sum: f32 = loss_vec.iter().sum();
+            for value in loss_vec.iter_mut() {
+                *value /= loss_sum;
+            }
+            // get a random value between 0 and 1
+            let r: f32 = rng.gen();
+            let mut cumulative_probability = 0.0;
+            for (selected_cell, &probability) in cell_data.iter().zip(loss_vec.iter()) {
+                cumulative_probability += probability;
+                if r < cumulative_probability {
+                    // the selected cell, update the current_cluster_index
+                    update_cluster_using_cell(selected_cell, &mut centers, current_cluster_index);
+                    break;
+                }
             }
         }
-        loss_vec.push(min_loss_index.0);
-        preferred_cluster.push(min_loss_index.1);
-    }
-    println!("{:?}", preferred_cluster);
-    //find the clusters which are closest to the cells
-    let mut centers: Vec<Vec<f32>> = Vec::new();
-    for cluster in 0..params.num_clusters {
-        centers.push(Vec::new());
-        for _ in 0..loci {
-            centers[cluster].push(rng.gen::<f32>().min(0.9999).max(0.0001));
+        else {
+            // Conversion code
+            let mut sums: Vec<Vec<f32>> = Vec::new();
+            let mut denoms: Vec<Vec<f32>> = Vec::new();
+            // put some random values in sums and 0.01 in denoms for each cluster
+            for cluster in 0..params.num_clusters {
+                sums.push(Vec::new());
+                denoms.push(Vec::new());
+                for _ in 0..loci {
+                    sums[cluster].push(rng.gen::<f32>()*0.01);
+                    denoms[cluster].push(0.01);
+                }
+            }
+            // go through each cell
+            for (index, cell) in cell_data.iter().enumerate() {
+                // choose the preferred
+                //let cluster = rng.gen_range(0,params.num_clusters);
+                let cluster = preferred_cluster[index];
+                // go thorugh the cell locations
+                for locus in 0..cell.loci.len() {
+                    let alt_c = cell.alt_counts[locus] as f32;
+                    let total = alt_c + (cell.ref_counts[locus] as f32);
+                    let locus_index = cell.loci[locus];
+                    // update sum and denoms for locus index
+                    sums[cluster][locus_index] += alt_c;
+                    denoms[cluster][locus_index] += total;
+                }
+            }
+            for cluster in 0..params.num_clusters {
+                for locus in 0..loci {
+                    sums[cluster][locus] = sums[cluster][locus]/denoms[cluster][locus] + (rng.gen::<f32>()/2.0 - 0.25);
+                    sums[cluster][locus] = sums[cluster][locus].min(0.9999).max(0.0001);
+                }
+            }
+            original_centers = sums;
         }
     }
-    centers
+    let mut cluster_centers_as_cell = vec![];
+    // Conversion code // convert the cluster centers to cells
+    for cluster_center in &centers {
+        let mut temp_cell_data: CellData = CellData{
+            log_binomial_coefficient: vec![],
+            allele_fractions: vec![],
+            alt_counts: vec![],
+            ref_counts: vec![],
+            loci: vec![],
+            total_alleles: 0.0
+        };
+        for loci in 0..cluster_center.len() {
+            // make all the required stuff for the current cell data
+            let value = cluster_center[loci];
+            let alt_count = value.0;
+            let ref_count = value.1;
+            temp_cell_data.alt_counts.push(alt_count as u32);
+            temp_cell_data.ref_counts.push(ref_count as u32);
+            temp_cell_data.loci.push(loci);
+            temp_cell_data.allele_fractions.push((alt_count as f32)/((ref_count + alt_count) as f32));
+            temp_cell_data.log_binomial_coefficient.push(
+                statrs::function::factorial::ln_binomial((ref_count + alt_count) as u64, alt_count as u64) as f32);
+            temp_cell_data.total_alleles += (ref_count + alt_count) as f32;
+        }
+        cluster_centers_as_cell.push(temp_cell_data);
+    }
+    // do EM and get the lowest cluster center stuff
+    let sub_sampling_attempts = 10;
+    let mut best_loss = f32::MAX;
+    let mut best_cluster = vec![];
+    
+    for _sub_sample_attempt in 0..sub_sampling_attempts {
+        // get random required cluster centers and save if loss is the lowest
+        let current_cluster_center = original_centers.choose_multiple(rng, params.num_clusters).cloned().collect();
+        let (loss, _, final_cluster_centers) = EM_return_cluster_centers (loci, current_cluster_center, &cluster_centers_as_cell, params, 0, 0);
+        if best_loss > loss {
+            best_loss = loss;
+            best_cluster = final_cluster_centers.clone();
+        }
+        eprintln!("@@@@ best loss for subsampled clusters {}", best_loss);
+    }
+    best_cluster
 }
 
 fn init_cluster_centers_ksubsampling(loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
