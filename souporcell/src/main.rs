@@ -30,6 +30,7 @@ use std::io::Read;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
+use std::u32::MAX;
 use statrs::function::{beta};
 
 use hashbrown::{HashMap,HashSet};
@@ -514,8 +515,54 @@ fn init_cluster_centers_kmeans_pp(loci: usize, cell_data: &Vec<CellData>, params
     original_centers
 }
 
-
 fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
+    let mut original_centers: Vec<Vec<f32>> = vec![];
+    // random initialization of clusters initialize twice the number of required clusters
+    for cluster in 0..params.num_clusters * 2 {
+        original_centers.push(Vec::new());
+        for _ in 0..loci {
+            original_centers[cluster].push(rng.gen::<f32>().min(0.9999).max(0.0001));
+        }
+    }
+    // go through the clusters and get the two clusters which are closest with each other
+    while original_centers.len() != params.num_clusters {
+        eprintln!("Current number of clusters {}", original_centers.len());   
+        let mut closest_2_clusters = (0, 0);
+        let mut min_dist = f32::MAX;
+        // go through each cluster and compare it to each other 2 loops i guess
+        for (index1, cluster1) in original_centers.iter().enumerate() {
+            for (index2, cluster2) in original_centers.iter().enumerate().skip(index1) {
+                if index1 != index2 {
+                    let curr_dist = cluster_compare(cluster1, cluster2);
+                    if curr_dist < min_dist {
+                        closest_2_clusters = (index1, index2);
+                        min_dist = curr_dist;
+                    }
+                }
+            }
+        }
+        eprintln!("Best distance {} closeset clusters {:?}", min_dist, closest_2_clusters); 
+        // save the two clusters which are closest and merge them together, del on for now
+        original_centers.remove(closest_2_clusters.0);
+    }
+    original_centers
+}
+
+fn cluster_compare (cluster1: &Vec<f32>, cluster2: &Vec<f32>) -> f32 {
+    let mut squared_dist = 0.0;
+    // go thorugh each loci of the two clusters, and get the squared distance between them
+    assert!(cluster1.len() == cluster2.len());
+    for locus in 0..cluster1.len() {
+        squared_dist += (cluster1[locus].powi(2) - cluster2[locus].powi(2)).abs();
+    }
+    squared_dist
+}
+
+fn cluster_merge (cluster1: Vec<f32>, cluster2: Vec<f32>) {
+    // lets just delete one for now
+}
+
+fn init_cluster_centers_overclustering_old(loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
     let mut original_centers: Vec<Vec<f32>> = vec![];
     // get 500 cluster centers using kmeanspp
     let mut centers: Vec<Vec<(f32, f32)>> = vec![vec![(1.0, 1.0); loci]; 500];
