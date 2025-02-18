@@ -528,7 +528,9 @@ fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, p
     while original_centers.len() != params.num_clusters {
         eprintln!("Current number of clusters {}", original_centers.len());   
         let mut closest_2_clusters = (0, 0);
+        let mut fartherst_2_clusters = (0, 0);
         let mut min_dist = f32::MAX;
+        let mut max_dist = f32::MIN;
         // go through each cluster and compare it to each other 2 loops i guess
         for (index1, cluster1) in original_centers.iter().enumerate() {
             for (index2, cluster2) in original_centers.iter().enumerate().skip(index1) {
@@ -538,10 +540,14 @@ fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, p
                         closest_2_clusters = (index1, index2);
                         min_dist = curr_dist;
                     }
+                    if curr_dist > max_dist {
+                        fartherst_2_clusters = (index1, index2);
+                        max_dist = curr_dist;
+                    }
                 }
             }
         }
-        eprintln!("Best distance {} closeset clusters {:?}", min_dist, closest_2_clusters); 
+        eprintln!("Min distance {} closeset clusters {:?};;; Max distance {} farthest clusters {:?}", min_dist, closest_2_clusters, max_dist, fartherst_2_clusters); 
         // save the two clusters which are closest and merge them together, del on for now
         original_centers.remove(closest_2_clusters.0);
     }
