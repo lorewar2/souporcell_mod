@@ -19,7 +19,7 @@ use std::cmp::max;
 use std::cmp::min;
 use statrs::distribution::{Binomial, Discrete, Beta, Continuous};
 use statrs::function::{beta,factorial};
-use std::f32;
+use std::f64;
 
 fn main() {
     let params = load_params();
@@ -31,13 +31,13 @@ fn main() {
 
 fn load_allele_data(params: &Params, cell_clusters: &Vec<(usize, usize)>, num_clusters: usize) -> 
         (FnvHashMap<(usize,usize),Vec<(f32, f32)>>, 
-        FnvHashMap<(usize, usize), Vec<f32>>, Vec<f32>, 
+        FnvHashMap<(usize, usize), Vec<f32>>, Vec<f64>, 
         Vec<Vec<(usize, u64, u64)>>, HashMap<usize, usize>) {
     let mut locus_counts: HashMap<usize, usize> = HashMap::new();
     let mut cluster_allele_counts: FnvHashMap<(usize, usize), Vec<(f32, f32)>> = FnvHashMap::default(); 
-        // this will be (clust1, clust2) to Vec<f32> which is locus_index to ref allele fraction
+        // this will be (clust1, clust2) to Vec<f64> which is locus_index to ref allele fraction
     let mut cell_allele_counts: Vec<Vec<(usize, u64, u64)>> = Vec::new(); 
-    let mut soup_allele_counts: Vec<(f32, f32)> = Vec::new();
+    let mut soup_allele_counts: Vec<(f64, f64)> = Vec::new();
         // so this is going to be cell_index to (locus_index, ref_count, alt_count)
     let alts = File::open(&params.alts).expect("unable to open alt file");
     let alts = BufReader::new(alts);
@@ -95,8 +95,8 @@ fn load_allele_data(params: &Params, cell_clusters: &Vec<(usize, usize)>, num_cl
         *count += 1;
         let clust1 = cell_clusters[cell].0;
         //let clust2 = cell_clusters[cell].1;
-        soup_allele_counts[locus].0 += refcount as f32;
-        soup_allele_counts[locus].1 += altcount as f32;
+        soup_allele_counts[locus].0 += refcount as f64;
+        soup_allele_counts[locus].1 += altcount as f64;
         for clust2 in 0..num_clusters {
             
             let mut locus_vec = cluster_allele_counts.get_mut(&(clust1, clust2)).unwrap();
@@ -110,19 +110,19 @@ fn load_allele_data(params: &Params, cell_clusters: &Vec<(usize, usize)>, num_cl
         }
         //{
         //    let mut locus_vec2 = cluster_allele_counts.get_mut(&(clust1, clust2)).unwrap();
-        //    locus_vec2[locus].0 += refcount as f32;
-        //    locus_vec2[locus].1 += altcount as f32;
+        //    locus_vec2[locus].0 += refcount as f64;
+        //    locus_vec2[locus].1 += altcount as f64;
         //}
         //{   // this scope isn't necessary but included for symmetry
         //    let mut locus_vec3 = cluster_allele_counts.get_mut(&(clust2, clust1)).unwrap();
-        //    locus_vec3[locus].0 += refcount as f32;
-        //    locus_vec3[locus].1 += altcount as f32;
+        //    locus_vec3[locus].0 += refcount as f64;
+        //    locus_vec3[locus].1 += altcount as f64;
         //}
         //}
         cell_allele_counts[cell].push((locus, refcount, altcount));
     }
     let mut cluster_allele_fractions: FnvHashMap<(usize, usize), Vec<f32>> = FnvHashMap::default();
-    let mut soup_allele_fractions: Vec<f32> = Vec::new();
+    let mut soup_allele_fractions: Vec<f64> = Vec::new();
     for (refcount, altcount) in soup_allele_counts {
         if refcount + altcount > 0.0 {
             soup_allele_fractions.push(refcount/(refcount+altcount));
@@ -169,7 +169,7 @@ fn load_allele_data(params: &Params, cell_clusters: &Vec<(usize, usize)>, num_cl
     }
     eprintln!("{} loaded 0 counts, is this a problem?", num_0_counts);
     //for (key, loci_vec) in cluster_allele_counts {
-    //    let mut new_vec: Vec<f32> = Vec::new();
+    //    let mut new_vec: Vec<f64> = Vec::new();
     //    for (count1, count2) in loci_vec {
     //        if count1 + count2 > 0.0 {
     //            new_vec.push(count1/(count1+count2));
@@ -184,8 +184,8 @@ fn load_allele_data(params: &Params, cell_clusters: &Vec<(usize, usize)>, num_cl
 
 fn call_doublets(params: &Params, mut cluster_allele_counts: FnvHashMap<(usize,usize),Vec<(f32,f32)>>, 
         cell_clusters: Vec<(usize, usize)>, mut cluster_allele_fractions: FnvHashMap<(usize, usize), Vec<f32>>, 
-        soup_allele_fractions: Vec<f32>, cell_allele_counts: Vec<Vec<(usize, u64, u64)>>, 
-        cluster_losses: Vec<(String, Vec<f32>)>, total_locus_counts: HashMap<usize, usize>) { // good god i should use more structs
+        soup_allele_fractions: Vec<f64>, cell_allele_counts: Vec<Vec<(usize, u64, u64)>>, 
+        cluster_losses: Vec<(String, Vec<f64>)>, total_locus_counts: HashMap<usize, usize>) { // good god i should use more structs
     let num_clusters = cluster_losses[0].1.len();
     print!("barcode\tstatus\tassignment\tsinglet_posterior\tdoublet_posterior\tlog_prob_singleton\tlog_prob_doublet\t");
     for cluster in 0..num_clusters {
@@ -197,7 +197,7 @@ fn call_doublets(params: &Params, mut cluster_allele_counts: FnvHashMap<(usize,u
     let mut all_removed: HashSet<usize> = HashSet::new();
     let mut any_removed = 1; // fake for while loop
     let mut best_singlets: Vec<usize> = Vec::new();
-    let mut all_cluster_logprobs: Vec<Vec<f32>> = Vec::new();
+    let mut all_cluster_logprobs: Vec<Vec<f64>> = Vec::new();
     while any_removed > 0 {
         all_cluster_logprobs = Vec::new();
         all_assignments = Vec::new();
@@ -207,11 +207,11 @@ fn call_doublets(params: &Params, mut cluster_allele_counts: FnvHashMap<(usize,u
             let debug = params.debug.contains(&cell);
             let mut best_doublet1 = 0;
             let mut best_doublet2 = 0;
-            let mut best_doublet_log_prob = f32::NEG_INFINITY;
+            let mut best_doublet_log_prob = f64::NEG_INFINITY;
             let mut best_singlet = 0;
-            let mut best_singleton_log_prob = f32::NEG_INFINITY;
-            let mut singletons: Vec<(f32, usize)> = Vec::new();
-            let mut cluster_logprobs: Vec<f32> = Vec::new();
+            let mut best_singleton_log_prob = f64::NEG_INFINITY;
+            let mut singletons: Vec<(f64, usize)> = Vec::new();
+            let mut cluster_logprobs: Vec<f64> = Vec::new();
             for cluster1 in 0..num_clusters {
                 let singleton_allele_fractions = cluster_allele_fractions.get(&(cluster1, cluster1)).unwrap();
                 let mut log_prob_singleton = (1.0 - params.doublet_prior).ln();
@@ -222,12 +222,12 @@ fn call_doublets(params: &Params, mut cluster_allele_counts: FnvHashMap<(usize,u
                     //if !legal_loci[cluster1].contains(&locus) { continue; }
                     let locus_counts = cluster_counts_vec[*locus];
                     //if locus_counts.0 + locus_counts.1 <= 35.0 { continue; }
-                    let singleton_allele_fraction = (1.0-params.p_soup)*singleton_allele_fractions[*locus] + params.p_soup*soup_allele_fractions[*locus];
-                    let count = locus_counts.0 + locus_counts.1;
+                    let singleton_allele_fraction = (1.0-params.p_soup)* (singleton_allele_fractions[*locus] as f64) + params.p_soup*soup_allele_fractions[*locus];
+                    let count = (locus_counts.0 + locus_counts.1) as f64;
                     //if count < 35.0 { continue; }
                     let lbetapdfsingleton = factorial::ln_binomial(*ref_count + *alt_count, *ref_count) + 
-                        beta::ln_beta(*ref_count as f32 + singleton_allele_fraction*count + 1.0, 
-                            *alt_count as f32 + (1.0 - singleton_allele_fraction)*count + 1.0) - 
+                        beta::ln_beta(*ref_count as f64 + singleton_allele_fraction *count + 1.0, 
+                            *alt_count as f64 + (1.0 - singleton_allele_fraction)*count + 1.0) - 
                         beta::ln_beta(singleton_allele_fraction*count + 1.0, 
                             (1.0-singleton_allele_fraction)*count + 1.0); //beta.pdf(singleton_allele_fraction).log10();
                     let singleton_logprob = lbetapdfsingleton; //singleton_binomial.pmf(*ref_count).ln();// + lbetapdfsingleton;
@@ -268,14 +268,14 @@ fn call_doublets(params: &Params, mut cluster_allele_counts: FnvHashMap<(usize,u
                         
                         //let beta2 = Beta::new(1.0+locus_counts2.0, 1.0+locus_counts2.1).unwrap();
                         
-                        let doublet_allele_fraction = (1.0-params.p_soup)*doublet_allele_fractions[*locus] + 
+                        let doublet_allele_fraction = (1.0-params.p_soup)*(doublet_allele_fractions[*locus] as f64) + 
                             params.p_soup*soup_allele_fractions[*locus];
                         //let count = ((locus_counts.0+locus_counts.1)+(locus_counts3.0 + locus_counts3.1))/2.0;
-                        let count = ((locus_counts.0+locus_counts.1)+(locus_counts3.0 + locus_counts3.1))/2.0;
+                        let count = (((locus_counts.0+locus_counts.1)+(locus_counts3.0 + locus_counts3.1))/2.0) as f64;
                         //if count < 35.0 { continue; }
                         let lbetapdfdoublet = factorial::ln_binomial(*ref_count + *alt_count, *ref_count) + 
-                            beta::ln_beta(*ref_count as f32 + doublet_allele_fraction*count + 1.0, 
-                                *alt_count as f32 + (1.0-doublet_allele_fraction)*count + 1.0) - 
+                            beta::ln_beta(*ref_count as f64 + doublet_allele_fraction*count + 1.0, 
+                                *alt_count as f64 + (1.0-doublet_allele_fraction)*count + 1.0) - 
                             beta::ln_beta(doublet_allele_fraction*count + 1.0, 
                                 (1.0-doublet_allele_fraction)*count + 1.0); //beta.pdf(singleton_allele_fraction).log10();
                         //if (singleton_allele_fraction-doublet_allele_fraction).abs() < 0.2 { continue; }
@@ -295,15 +295,15 @@ fn call_doublets(params: &Params, mut cluster_allele_counts: FnvHashMap<(usize,u
                 }
             }
             let cell_barcode = &cluster_losses[cell].0;
-            //let losses: Vec<f32> = cluster_losses[cell].1;
-            let mut doublet_question: Vec<f32> = Vec::new();
+            //let losses: Vec<f64> = cluster_losses[cell].1;
+            let mut doublet_question: Vec<f64> = Vec::new();
             //doublet_question.push(log_prob_singleton);
             //doublet_question.push(log_prob_doublet);
             doublet_question.push(best_singleton_log_prob);
             doublet_question.push(best_doublet_log_prob);
             let doublet_question_denom = log_sum_exp(&doublet_question);
-            let mut singlet_question: Vec<f32> = Vec::new();
-            let mut top_singlet: f32 = f32::NEG_INFINITY;
+            let mut singlet_question: Vec<f64> = Vec::new();
+            let mut top_singlet: f64 = f64::NEG_INFINITY;
             let mut singlet_assignment = 0;
             for (cluster, loss) in cluster_losses[cell].1.iter().enumerate() {
                 singlet_question.push(*loss);
@@ -374,7 +374,7 @@ fn call_doublets(params: &Params, mut cluster_allele_counts: FnvHashMap<(usize,u
                 let mut counts = cluster_allele_counts.get_mut(&(cluster1, cluster2)).unwrap();
                 let loci = &cell_allele_counts[cell];
                 for (locus, ref_count, alt_count) in loci {
-                    counts[*locus].0 = (counts[*locus].0 - *ref_count as f32).max(0.0);
+                    counts[*locus].0 = (counts[*locus].0  - *ref_count as f32).max(0.0);
                     counts[*locus].1 = (counts[*locus].1 - *alt_count as f32).max(0.0);
                 }
             }
@@ -407,31 +407,31 @@ fn call_doublets(params: &Params, mut cluster_allele_counts: FnvHashMap<(usize,u
     }
 }
 
-fn log_sum_exp(p: &Vec<f32>) -> f32{
-    let max_p: f32 = p.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    let sum_rst: f32 = p.iter().map(|x| (x - max_p).exp()).sum();
+fn log_sum_exp(p: &Vec<f64>) -> f64{
+    let max_p: f64 = p.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let sum_rst: f64 = p.iter().map(|x| (x - max_p).exp()).sum();
     max_p + sum_rst.ln()
 }
 
-fn load_clusters(clusters: &String) -> (Vec<(usize, usize)>, Vec<(String, Vec<f32>)>, usize)  {
+fn load_clusters(clusters: &String) -> (Vec<(usize, usize)>, Vec<(String, Vec<f64>)>, usize)  {
     let f = File::open(clusters).expect("Unable to open file");
     let f = BufReader::new(f);
     let mut cell_clusters: Vec<(usize, usize)> = Vec::new();
-    let mut clusters: Vec<(String, Vec<f32>)> = Vec::new();
+    let mut clusters: Vec<(String, Vec<f64>)> = Vec::new();
     let mut num_clusters: usize = 0;
     for line in f.lines() {
         let line = line.expect("Unable to read line");
         let tokens: Vec<&str> = line.trim().split("\t").collect();
         let cell = tokens[0];
-        let mut losses: Vec<f32> = Vec::new();
+        let mut losses: Vec<f64> = Vec::new();
         let cluster1 = tokens[1].to_string().parse::<usize>().unwrap();
         num_clusters = max(num_clusters, cluster1);
-        let mut best: f32 = -10000000000.0;
-        let mut second_best: f32 = -10000000000.0;
+        let mut best: f64 = -10000000000.0;
+        let mut second_best: f64 = -10000000000.0;
         let mut second_best_index: usize = 0;
         let mut best_index: usize = 0;
         for i in 2..tokens.len() {
-            let value = tokens[i].to_string().parse::<f32>().unwrap();
+            let value = tokens[i].to_string().parse::<f64>().unwrap();
             losses.push(value);
             if value > best {
                 second_best = best;
@@ -453,9 +453,9 @@ fn load_clusters(clusters: &String) -> (Vec<(usize, usize)>, Vec<(String, Vec<f3
 
 /// Computes log(exp(a) + exp(b)) in a way that tries to avoid over/underflows.
 /// log(exp(a - b) + 1) + b = log((exp(a) + exp(b)) - exp(b)) + b = log(exp(a) + exp(b))
-pub fn logaddexp(a: f32, b: f32, base: f32) -> f32 {
-    let c: f32;
-    let d: f32;
+pub fn logaddexp(a: f64, b: f64, base: f64) -> f64 {
+    let c: f64;
+    let d: f64;
 
     // powf(a-b) doesn't do the right thing if a > b.
     if a > b {
@@ -474,11 +474,11 @@ struct Params {
     alts: String,
     refs: String,
     clusters: String,
-    p_soup: f32,
-    doublet_prior: f32,
+    p_soup: f64,
+    doublet_prior: f64,
     debug: FnvHashSet<usize>,
-    doublet_threshold: f32,
-    singlet_threshold: f32,
+    doublet_threshold: f64,
+    singlet_threshold: f64,
 }
 
 fn load_params() -> Params {
@@ -488,9 +488,9 @@ fn load_params() -> Params {
     let refs = params.value_of("refs").unwrap();
     let clusters = params.value_of("clusters").unwrap();
     let soup = params.value_of("p_soup").unwrap_or("0.0");
-    let soup = soup.to_string().parse::<f32>().unwrap();
+    let soup = soup.to_string().parse::<f64>().unwrap();
     let doublet_prior = params.value_of("doublet_prior").unwrap_or("0.5");
-    let doublet_prior = doublet_prior.to_string().parse::<f32>().unwrap();
+    let doublet_prior = doublet_prior.to_string().parse::<f64>().unwrap();
     let debug_cells: Vec<&str> = match params.values_of("debug") {
         Some(x) => x.collect(),
         None => Vec::new(),
@@ -501,9 +501,9 @@ fn load_params() -> Params {
         debug.insert(cell);
     }
     let doublet_threshold = params.value_of("doublet_threshold").unwrap_or("0.9");
-    let doublet_threshold = doublet_threshold.to_string().parse::<f32>().unwrap();
+    let doublet_threshold = doublet_threshold.to_string().parse::<f64>().unwrap();
     let singlet_threshold = params.value_of("singlet_threshold").unwrap_or("0.9");
-    let singlet_threshold = singlet_threshold.to_string().parse::<f32>().unwrap();
+    let singlet_threshold = singlet_threshold.to_string().parse::<f64>().unwrap();
 
     Params{
         alts: alts.to_string(),
