@@ -518,10 +518,22 @@ fn init_cluster_centers_kmeans_pp(loci: usize, cell_data: &Vec<CellData>, params
 fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
     let mut original_centers: Vec<Vec<f32>> = vec![];
     // random initialization of clusters initialize twice the number of required clusters
-    for cluster in 0..params.num_clusters * 2 {
+    for cluster in 0..params.num_clusters * 10 {
         original_centers.push(Vec::new());
         for _ in 0..loci {
             original_centers[cluster].push(rng.gen::<f32>().min(0.9999).max(0.0001));
+        }
+    }
+    // weights for distance calculation
+    let mut loci_weights = vec![0.0; loci];
+    // go thorugh the 
+    for (index, cell) in cell_data.iter().enumerate() {
+        // go thorugh the cell locations
+        for locus in 0..cell.loci.len() {
+            let alt_c = cell.alt_counts[locus] as f32;
+            let total = alt_c + (cell.ref_counts[locus] as f32);
+            let locus_index = cell.loci[locus];
+            loci_weights[locus_index] += total;
         }
     }
     // go through the clusters and get the two clusters which are closest with each other
@@ -535,7 +547,7 @@ fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, p
         for (index1, cluster1) in original_centers.iter().enumerate() {
             for (index2, cluster2) in original_centers.iter().enumerate().skip(index1) {
                 if index1 != index2 {
-                    let curr_dist = cluster_compare(cluster1, cluster2);
+                    let curr_dist = cluster_compare(cluster1, cluster2, &loci_weights);
                     if curr_dist < min_dist {
                         closest_2_clusters = (index1, index2);
                         min_dist = curr_dist;
@@ -554,12 +566,12 @@ fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, p
     original_centers
 }
 
-fn cluster_compare (cluster1: &Vec<f32>, cluster2: &Vec<f32>) -> f32 {
+fn cluster_compare (cluster1: &Vec<f32>, cluster2: &Vec<f32>, loci_weights: &Vec<f32>) -> f32 {
     let mut squared_dist = 0.0;
-    // go thorugh each loci of the two clusters, and get the squared distance between them
+    // go thorugh each loci of the two clusters, and get the squared distance between them multiplied by the locus weight
     assert!(cluster1.len() == cluster2.len());
     for locus in 0..cluster1.len() {
-        squared_dist += (cluster1[locus].powi(2) - cluster2[locus].powi(2)).abs();
+        squared_dist += ((cluster1[locus] - cluster2[locus]) * loci_weights[locus]).powi(2);
     }
     squared_dist
 }
