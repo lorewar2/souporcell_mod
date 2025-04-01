@@ -20,6 +20,7 @@ use clap::App;
 const TEMP: f32 = 20.0;
 const MULTIPLY_CLUS: usize = 10;
 const READ_ALT_REF_MIN: &str = "4";
+const USE_KHM: bool = true;
 
 fn main() {
     let params = load_params();
@@ -61,8 +62,14 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
             // the main steps here, multiple restarts with threads 
             // INITIALIZING CLUSTERS
             let cluster_centers: Vec<Vec<f32>> = init_cluster_centers(loci_used, &cell_data, params, &mut thread_data.rng);
-            // EXPRECTATION MAXIMIZATION WITH TEMP ANNEALING
-            let (log_loss, log_probabilities) = em(loci_used, cluster_centers, &cell_data ,params, iteration, thread_data.thread_num);
+            let (log_loss, log_probabilities);
+            // Main method
+            if USE_KHM {
+                (log_loss, log_probabilities) = khm(loci_used, cluster_centers, &cell_data ,params, iteration, thread_data.thread_num);
+            }
+            else {
+                (log_loss, log_probabilities) = em(loci_used, cluster_centers, &cell_data ,params, iteration, thread_data.thread_num);
+            }
             if log_loss > thread_data.best_total_log_probability {
                 thread_data.best_total_log_probability = log_loss;
                 thread_data.best_log_probabilities = log_probabilities;
@@ -130,14 +137,18 @@ fn khm(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData
         for (celldex, cell) in cell_data.iter().enumerate() {
             // both log loss and min loss clus
             let (log_binoms, min_clus) = binomial_loss_with_min_index(cell, &cluster_centers, log_prior);
+            // for total loss
+            log_binom_loss += log_sum_exp(&log_binoms);
             // calculate the q and q sum for cell wrt each cluster
             let (q_vec, q_sum) = calculate_q_for_current_cell(&log_binoms, min_clus);
             // update the sums and denoms using this 
             update_centers_hm(&mut sums, &mut denoms, cell, &q_vec, q_sum);
         }
+        log_loss_change = log_binom_loss - last_log_loss;
+        last_log_loss = log_binom_loss;
         update_final(loci, &sums, &denoms, &mut cluster_centers);
         iterations += 1;
-        eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\t{}", thread_num, epoch, iterations, temp_step, log_binom_loss, log_loss_change);
+        eprintln!("binomial\t{}\t{}\t{}\t{}\t{}", thread_num, epoch, iterations, log_binom_loss, log_loss_change);
     }
 
     (total_log_loss, final_log_probabilities)
@@ -192,7 +203,7 @@ fn binomial_loss_with_min_index(cell_data: &CellData, cluster_centers: &Vec<Vec<
         }
         if log_probabilities[cluster] < min_log {
             min_log = log_probabilities[cluster];
-            min_index = center;
+            min_index = cluster;
         }
     }
     (log_probabilities, min_index)
@@ -707,8 +718,8 @@ fn load_params() -> Params {
     let min_ref = min_ref.to_string().parse::<u32>().unwrap();
     let restarts = params.value_of("restarts").unwrap_or("100");
     let restarts = restarts.to_string().parse::<u32>().unwrap();
-    //let initialization_strategy = params.value_of("initialization_strategy").unwrap_or("random_uniform");
-    let initialization_strategy = params.value_of("initialization_strategy").unwrap_or("overcluster");
+    let initialization_strategy = params.value_of("initialization_strategy").unwrap_or("random_uniform");
+    //let initialization_strategy = params.value_of("initialization_strategy").unwrap_or("overcluster");
     let initialization_strategy = match initialization_strategy {
         "kmeans++" => ClusterInit::KmeansPP,
         "random_uniform" => ClusterInit::RandomUniform,
