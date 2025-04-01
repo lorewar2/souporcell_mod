@@ -98,6 +98,66 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
 
 }
 
+fn khm(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>) {
+    // sums and denoms for likelihood calculation
+    let mut total_log_loss = f32::NEG_INFINITY;
+    let mut final_log_probabilities = Vec::new();
+    let mut iterations = 0;
+    let log_prior: f32 = (1.0/(params.num_clusters as f32)).ln();
+
+    for _cell in 0..cell_data.len() {
+        final_log_probabilities.push(Vec::new());
+    }
+    let log_loss_change_limit = 0.01*(cell_data.len() as f32);
+    let temp_steps = 9;
+    let mut last_log_loss = f32::NEG_INFINITY;
+    let mut log_loss_change = 10000.0;
+    while iterations < 1000 {
+        let mut log_binom_loss = 0.0;
+        // reset sum and denoms
+        reset_sums_denoms(loci, &mut sums, &mut denoms, params.num_clusters);
+        for (celldex, cell) in cell_data.iter().enumerate() {
+            // both log loss and min loss clus
+            let (log_binoms, min_clus) = binomial_loss_with_min_index(cell, &cluster_centers, log_prior);
+            // calculate the stuff q i,k cell for each cluster
+
+        }
+        // calculate q mean
+
+        
+        for (celldex, cell) in cell_data.iter().enumerate() {
+            // calculate p i,k
+
+            // update clusters
+            
+        
+        }
+        iterations += 1;
+        eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\t{}", thread_num, epoch, iterations, temp_step, log_binom_loss, log_loss_change);
+    }
+
+    (total_log_loss, final_log_probabilities)
+}
+
+fn binomial_loss_with_min_index(cell_data: &CellData, cluster_centers: &Vec<Vec<f32>>, log_prior: f32) -> (Vec<f32>, usize) {
+    let mut log_probabilities: Vec<f32> = Vec::new();
+    let mut min_log: f32 = f32::MAX;
+    let mut min_index: usize = 0;
+    for (cluster, center) in cluster_centers.iter().enumerate() {
+        log_probabilities.push(log_prior);
+        for (locus_index, locus) in cell_data.loci.iter().enumerate() {
+            log_probabilities[cluster] += cell_data.log_binomial_coefficient[locus_index] + 
+                (cell_data.alt_counts[locus_index] as f32) * center[*locus].ln() + 
+                (cell_data.ref_counts[locus_index] as f32) * (1.0 - center[*locus]).ln();
+        }
+        if log_probabilities[cluster] < min_log {
+            min_log = log_probabilities[cluster];
+            min_index = center;
+        }
+    }
+    (log_probabilities, min_index)
+}
+
 fn em(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>) {
     // sums and denoms for likelihood calculation
     let mut sums: Vec<Vec<f32>> = Vec::new();
