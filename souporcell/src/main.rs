@@ -100,6 +100,16 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
 
 fn khm(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>) {
     // sums and denoms for likelihood calculation
+    let mut sums: Vec<Vec<f32>> = Vec::new();
+    let mut denoms: Vec<Vec<f32>> = Vec::new();
+    for cluster in 0..params.num_clusters {
+        sums.push(Vec::new());
+        denoms.push(Vec::new());
+        for _index in 0..loci {
+            sums[cluster].push(1.0);
+            denoms[cluster].push(2.0); // psuedocounts
+        }
+    }
     let mut total_log_loss = f32::NEG_INFINITY;
     let mut final_log_probabilities = Vec::new();
     let mut iterations = 0;
@@ -113,30 +123,60 @@ fn khm(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData
     let mut last_log_loss = f32::NEG_INFINITY;
     let mut log_loss_change = 10000.0;
     while iterations < 1000 {
+        // should prob calcualte the performance metric too, to quit
         let mut log_binom_loss = 0.0;
         // reset sum and denoms
         reset_sums_denoms(loci, &mut sums, &mut denoms, params.num_clusters);
         for (celldex, cell) in cell_data.iter().enumerate() {
             // both log loss and min loss clus
             let (log_binoms, min_clus) = binomial_loss_with_min_index(cell, &cluster_centers, log_prior);
-            // calculate the stuff q i,k cell for each cluster
-
+            // calculate the q and q sum for cell wrt each cluster
+            let (q_vec, q_sum) = calculate_q_for_current_cell(&log_binoms, min_clus);
+            // update the sums and denoms using this 
+            update_centers_hm(&mut sums, &mut denoms, cell, &q_vec, q_sum);
         }
-        // calculate q mean
-
-        
-        for (celldex, cell) in cell_data.iter().enumerate() {
-            // calculate p i,k
-
-            // update clusters
-            
-        
-        }
+        update_final(loci, &sums, &denoms, &mut cluster_centers);
         iterations += 1;
         eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\t{}", thread_num, epoch, iterations, temp_step, log_binom_loss, log_loss_change);
     }
 
     (total_log_loss, final_log_probabilities)
+}
+
+fn update_centers_hm(sums: &mut Vec<Vec<f32>>, denoms: &mut Vec<Vec<f32>>, cell: &CellData, q_vec: &Vec<f32>, q_sum: f32) {
+    for locus in 0..cell.loci.len() {
+        for (cluster, log_probability) in q_vec.iter().enumerate() {
+            let probability = (log_probability - q_sum).exp();
+            sums[cluster][cell.loci[locus]] += probability * (cell.alt_counts[locus] as f32);
+            denoms[cluster][cell.loci[locus]] += probability * ((cell.alt_counts[locus] + cell.ref_counts[locus]) as f32);
+        }
+    }
+}
+
+fn calculate_q_for_current_cell (log_loss_vec: &Vec<f32>, min_clus: usize) -> (Vec<f32>, f32){
+    // we need the sum as well
+    let mut q_sum: f32 = 0.0;
+    let mut q_vec = vec![];
+    let log_winner_cluster_loss = log_loss_vec[min_clus];
+    // first calculate the common denom
+    let mut log_loss_winner_sub_current = vec![];
+    for (index, log_loss) in log_loss_vec.iter().enumerate() {
+        if index != min_clus {
+            log_loss_winner_sub_current.push(2.0 * (log_winner_cluster_loss - log_loss));
+        }
+        else {
+            log_loss_winner_sub_current.push(1.0);
+        }
+    }
+    let q_denom = log_sum_exp(&log_loss_winner_sub_current);
+    // calculate q
+    for (index, log_loss) in log_loss_vec.iter().enumerate() {
+        let q_for_cluster = (4.0 * log_winner_cluster_loss - 3.0 * log_loss) - q_denom;
+        q_vec.push(q_for_cluster);
+    }
+    // get the sum
+    q_sum = log_sum_exp(&q_vec);
+    (q_vec, q_sum)
 }
 
 fn binomial_loss_with_min_index(cell_data: &CellData, cluster_centers: &Vec<Vec<f32>>, log_prior: f32) -> (Vec<f32>, usize) {
