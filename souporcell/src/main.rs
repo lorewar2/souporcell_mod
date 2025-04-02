@@ -129,29 +129,50 @@ fn khm(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData
     let temp_steps = 9;
     let mut last_log_loss = f32::NEG_INFINITY;
     let mut log_loss_change = 10000.0;
-    while iterations < 1000 {
-        // should prob calcualte the performance metric too, to quit
-        let mut log_binom_loss = 0.0;
-        // reset sum and denoms
-        reset_sums_denoms(loci, &mut sums, &mut denoms, params.num_clusters);
-        for (celldex, cell) in cell_data.iter().enumerate() {
-            // both log loss and min loss clus
-            let (log_binoms, min_clus) = binomial_loss_with_min_index(cell, &cluster_centers, log_prior);
-            // for total loss
-            log_binom_loss += log_sum_exp(&log_binoms);
-            // calculate the q and q sum for cell wrt each cluster
-            let (q_vec, q_sum) = calculate_q_for_current_cell(&log_binoms, min_clus);
-            // update the sums and denoms using this 
-            update_centers_hm(&mut sums, &mut denoms, cell, &q_vec, q_sum);
+    for temp_step in 0..temp_steps {
+        while iterations < 1000 {
+            // should prob calcualte the performance metric too, to quit
+            let mut log_binom_loss = 0.0;
+            // reset sum and denoms
+            reset_sums_denoms(loci, &mut sums, &mut denoms, params.num_clusters);
+            for (celldex, cell) in cell_data.iter().enumerate() {
+                // both log loss and min loss clus
+                let (log_binoms, min_clus) = binomial_loss_with_min_index(cell, &cluster_centers, log_prior);
+                // for total loss
+                log_binom_loss += log_sum_exp(&log_binoms);
+                // temp determinstic annealing
+                let mut temp = (cell.total_alleles / (TEMP * 2.0f32.powf(temp_step as f32))).max(1.0);
+                if temp_step == temp_steps - 1 { temp = 1.0; } // final iter temp is 1
+                // calculate the q and q sum for cell wrt each cluster
+                let (q_vec, q_sum) = calculate_q_for_current_cell(&log_binoms, min_clus);
+                // adjust with temp
+                let adjusted_log_binoms = normalize_in_log_with_temp_khm(temp, &q_vec, q_sum);
+                // update sums and denoms
+                update_centers_average(&mut sums, &mut denoms, cell, &adjusted_log_binoms);
+            }
+            total_log_loss = log_binom_loss;
+            log_loss_change = log_binom_loss - last_log_loss;
+            last_log_loss = log_binom_loss;
+            update_final(loci, &sums, &denoms, &mut cluster_centers);
+            iterations += 1;
+            eprintln!("binomial\t{}\t{}\t{}\t{}\t{}", thread_num, epoch, iterations, log_binom_loss, log_loss_change);
         }
-        log_loss_change = log_binom_loss - last_log_loss;
-        last_log_loss = log_binom_loss;
-        update_final(loci, &sums, &denoms, &mut cluster_centers);
-        iterations += 1;
-        eprintln!("binomial\t{}\t{}\t{}\t{}\t{}", thread_num, epoch, iterations, log_binom_loss, log_loss_change);
     }
 
     (total_log_loss, final_log_probabilities)
+}
+
+fn normalize_in_log_with_temp_khm(temp: f32, q_vec: &Vec<f32>, q_sum: f32) -> Vec<f32> {
+    let mut normalized_probabilities: Vec<f32> = Vec::new();
+    let mut new_log_probs: Vec<f32> = Vec::new();
+    for log_prob in q_vec {
+        new_log_probs.push((log_prob - q_sum)/temp);
+    }
+    let sum = log_sum_exp(&new_log_probs);
+    for i in 0..q_vec.len() {
+        normalized_probabilities.push((new_log_probs[i] - sum).exp());
+    }
+    normalized_probabilities 
 }
 
 fn update_centers_hm(sums: &mut Vec<Vec<f32>>, denoms: &mut Vec<Vec<f32>>, cell: &CellData, q_vec: &Vec<f32>, q_sum: f32) {
