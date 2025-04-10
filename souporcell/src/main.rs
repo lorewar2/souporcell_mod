@@ -21,6 +21,7 @@ const TEMP: f32 = 20.0;
 const MULTIPLY_CLUS: usize = 10;
 const READ_ALT_REF_MIN: &str = "4";
 const USE_KHM: bool = true;
+const P_DIM: f32 = 2.0;
 
 fn main() {
     let params = load_params();
@@ -160,7 +161,7 @@ fn khm(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData
 fn calculate_khm_perf_for_cell (log_binoms: &Vec<f32>) -> f32 {
     let mut inverse_log_binoms = vec![];
     for log_binom in log_binoms {
-        inverse_log_binoms.push(-2.0 * log_binom);
+        inverse_log_binoms.push(-P_DIM * log_binom);
     }
     log_sum_exp(&inverse_log_binoms)
 }
@@ -184,7 +185,7 @@ fn calculate_q_for_current_cell (log_loss_vec: &Vec<f32>, min_clus: usize) -> (V
     let mut log_loss_winner_sub_current = vec![];
     for (index, log_loss) in log_loss_vec.iter().enumerate() {
         if index != min_clus {
-            log_loss_winner_sub_current.push(2.0 * (log_winner_cluster_loss - log_loss));
+            log_loss_winner_sub_current.push(P_DIM * (log_winner_cluster_loss - log_loss));
         }
         else {
             log_loss_winner_sub_current.push(0.0);
@@ -193,7 +194,7 @@ fn calculate_q_for_current_cell (log_loss_vec: &Vec<f32>, min_clus: usize) -> (V
     let q_denom = log_sum_exp(&log_loss_winner_sub_current);
     // calculate q
     for (_index, log_loss) in log_loss_vec.iter().enumerate() {
-        let q_for_cluster = (4.0 * log_winner_cluster_loss - 3.0 * log_loss) - (2.0 * q_denom);
+        let q_for_cluster = ((2.0 * P_DIM * log_winner_cluster_loss) - ((P_DIM + 2.0) * log_loss)) - (2.0 * q_denom);
         q_vec.push(q_for_cluster);
     }
     // get the sum
