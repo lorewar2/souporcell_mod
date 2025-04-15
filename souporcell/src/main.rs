@@ -20,7 +20,7 @@ use clap::App;
 const TEMP: f32 = 20.0;
 const MULTIPLY_CLUS: usize = 10;
 const READ_ALT_REF_MIN: &str = "12";
-const USE_KHM: bool = true;
+const USE_KHM_VAR: usize = 1; // 1 khm 2 khm with da 3 khm with beta binomial
 const P_DIM: f32 = 64.0;
 
 fn main() {
@@ -65,8 +65,14 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
             let cluster_centers: Vec<Vec<f32>> = init_cluster_centers(loci_used, &cell_data, params, &mut thread_data.rng);
             let (log_loss, log_probabilities);
             // Main method
-            if USE_KHM {
+            if USE_KHM == 1 {
                 (log_loss, log_probabilities) = khm(loci_used, cluster_centers, &cell_data ,params, iteration, thread_data.thread_num);
+            }
+            else if USE_KHM == 2 {
+                (log_loss, log_probabilities) = khm_temp_annealing(loci_used, cluster_centers, &cell_data ,params, iteration, thread_data.thread_num);
+            }
+            else if USE_KHM == 3 {
+                (log_loss, log_probabilities) = khm_beta_binom(loci_used, cluster_centers, &cell_data ,params, iteration, thread_data.thread_num);
             }
             else {
                 (log_loss, log_probabilities) = em(loci_used, cluster_centers, &cell_data ,params, iteration, thread_data.thread_num);
@@ -107,6 +113,110 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
 }
 
 fn khm(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>) {
+    // sums and denoms for likelihood calculation
+    let mut sums: Vec<Vec<f32>> = Vec::new();
+    let mut denoms: Vec<Vec<f32>> = Vec::new();
+    for cluster in 0..params.num_clusters {
+        sums.push(Vec::new());
+        denoms.push(Vec::new());
+        for _index in 0..loci {
+            sums[cluster].push(1.0);
+            denoms[cluster].push(2.0); // psuedocounts
+        }
+    }
+    let mut total_log_loss = f32::NEG_INFINITY;
+    let mut final_log_probabilities = Vec::new();
+    let mut iterations = 0;
+    let log_prior: f32 = (1.0/(params.num_clusters as f32)).ln();
+
+    for _cell in 0..cell_data.len() {
+        final_log_probabilities.push(Vec::new());
+    }
+    let mut last_log_loss = f32::NEG_INFINITY;
+    let mut log_loss_change;
+    while iterations < 20 {
+        // should prob calcualte the performance metric too, to quit
+        let mut log_binom_loss = 0.0;
+        // reset sum and denoms
+        reset_sums_denoms(loci, &mut sums, &mut denoms, params.num_clusters);
+        let mut cell_khm_perfs = vec![];
+        for (celldex, cell) in cell_data.iter().enumerate() {
+            // both log loss and min loss clus
+            let (log_binoms, min_clus) = binomial_loss_with_min_index(cell, &cluster_centers, log_prior);
+            // calculate the cell khm perf function
+            cell_khm_perfs.push((params.num_clusters as f32).ln() - calculate_khm_perf_for_cell(&log_binoms));
+            // for total loss
+            log_binom_loss += log_sum_exp(&log_binoms);
+            // calculate the q and q sum for cell wrt each cluster
+            let (q_vec, q_sum) = calculate_q_for_current_cell(&log_binoms, min_clus);
+            // adjust with temp
+            update_centers_hm(&mut sums, &mut denoms, cell, &q_vec, q_sum);
+            final_log_probabilities[celldex] = log_binoms;
+        }
+        let khm_log_loss = log_sum_exp(&cell_khm_perfs);
+        total_log_loss = log_binom_loss;
+        log_loss_change = log_binom_loss - last_log_loss;
+        last_log_loss = log_binom_loss;
+        update_final(loci, &sums, &denoms, &mut cluster_centers);
+        iterations += 1;
+        eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\tkhm_loss: {}", thread_num, epoch, iterations, log_binom_loss, log_loss_change, khm_log_loss);
+    }
+    (total_log_loss, final_log_probabilities)
+}
+
+fn khm_temp_annealing(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>) {
+    // sums and denoms for likelihood calculation
+    let mut sums: Vec<Vec<f32>> = Vec::new();
+    let mut denoms: Vec<Vec<f32>> = Vec::new();
+    for cluster in 0..params.num_clusters {
+        sums.push(Vec::new());
+        denoms.push(Vec::new());
+        for _index in 0..loci {
+            sums[cluster].push(1.0);
+            denoms[cluster].push(2.0); // psuedocounts
+        }
+    }
+    let mut total_log_loss = f32::NEG_INFINITY;
+    let mut final_log_probabilities = Vec::new();
+    let mut iterations = 0;
+    let log_prior: f32 = (1.0/(params.num_clusters as f32)).ln();
+
+    for _cell in 0..cell_data.len() {
+        final_log_probabilities.push(Vec::new());
+    }
+    let mut last_log_loss = f32::NEG_INFINITY;
+    let mut log_loss_change;
+    while iterations < 20 {
+        // should prob calcualte the performance metric too, to quit
+        let mut log_binom_loss = 0.0;
+        // reset sum and denoms
+        reset_sums_denoms(loci, &mut sums, &mut denoms, params.num_clusters);
+        let mut cell_khm_perfs = vec![];
+        for (celldex, cell) in cell_data.iter().enumerate() {
+            // both log loss and min loss clus
+            let (log_binoms, min_clus) = binomial_loss_with_min_index(cell, &cluster_centers, log_prior);
+            // calculate the cell khm perf function
+            cell_khm_perfs.push((params.num_clusters as f32).ln() - calculate_khm_perf_for_cell(&log_binoms));
+            // for total loss
+            log_binom_loss += log_sum_exp(&log_binoms);
+            // calculate the q and q sum for cell wrt each cluster
+            let (q_vec, q_sum) = calculate_q_for_current_cell(&log_binoms, min_clus);
+            // adjust with temp
+            update_centers_hm(&mut sums, &mut denoms, cell, &q_vec, q_sum);
+            final_log_probabilities[celldex] = log_binoms;
+        }
+        let khm_log_loss = log_sum_exp(&cell_khm_perfs);
+        total_log_loss = log_binom_loss;
+        log_loss_change = log_binom_loss - last_log_loss;
+        last_log_loss = log_binom_loss;
+        update_final(loci, &sums, &denoms, &mut cluster_centers);
+        iterations += 1;
+        eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\tkhm_loss: {}", thread_num, epoch, iterations, log_binom_loss, log_loss_change, khm_log_loss);
+    }
+    (total_log_loss, final_log_probabilities)
+}
+
+fn khm_beta_binom(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>) {
     // sums and denoms for likelihood calculation
     let mut sums: Vec<Vec<f32>> = Vec::new();
     let mut denoms: Vec<Vec<f32>> = Vec::new();
