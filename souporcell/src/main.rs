@@ -485,6 +485,8 @@ fn em(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>
             denoms[cluster].push(2.0); // psuedocounts
         }
     }
+    // for testing
+    cluster_centers = init_clusters_with_optimal (loci, params, cell_data);
     //e qual prior
     let log_prior: f32 = (1.0/(params.num_clusters as f32)).ln();
     // current iteration
@@ -531,6 +533,35 @@ fn em(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>
         }
     }
     (total_log_loss, final_log_probabilities)
+}
+
+fn init_clusters_with_optimal (loci: usize, params: &Params, cell_data: &Vec<CellData>) -> Vec<Vec<f32>> {
+    eprintln!("Optimal clusters start");
+    let mut centers: Vec<Vec<f32>> = Vec::new();
+    for cluster in 0..params.num_clusters {
+        centers.push(Vec::new());
+        for _ in 0..loci {
+            centers[cluster].push(0.0001);
+        }
+    }
+    // go through all the loci of cells and assign clusters for 400
+    let mut cluster_index = 0;
+    for (index, cell) in cell_data.iter().enumerate() {
+        if index % 400 == 0 && index != 0 {
+            cluster_index += 1;
+        }
+        for (locus_index, locus) in cell.loci.iter().enumerate() {
+            centers[cluster_index][*locus] += (cell.alt_counts[locus_index] as f32) /  ((cell.alt_counts[locus_index] as f32) + (cell.ref_counts[locus_index] as f32));
+        }
+    }
+    // truncate
+    for cluster in 0..params.num_clusters {
+        for locus in 0..loci {
+            centers[cluster][locus] = centers[cluster][locus].min(0.9999).max(0.0001);
+        }
+    }
+    eprintln!("Optimal clusters end");
+    centers
 }
 
 fn em_without_temp(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>) {
