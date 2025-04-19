@@ -486,7 +486,7 @@ fn em(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>
         }
     }
     // for testing
-    cluster_centers = init_clusters_with_optimal (loci, params, cell_data);
+    //cluster_centers = init_clusters_with_optimal (loci, params, cell_data);
     //e qual prior
     let log_prior: f32 = (1.0/(params.num_clusters as f32)).ln();
     // current iteration
@@ -511,7 +511,7 @@ fn em(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>
                 // get the bionomial loss for the cell with current cluster centers
                 let log_binoms = binomial_loss(cell, &cluster_centers, log_prior);
                 cell_khm_perfs.push((params.num_clusters as f32).ln() - calculate_khm_perf_for_cell(&log_binoms));
-                // for total loss 
+                // for total loss
                 log_binom_loss += log_sum_exp(&log_binoms);
                 // temp determinstic annealing
                 let mut temp = (cell.total_alleles / (TEMP * 2.0f32.powf(temp_step as f32))).max(1.0);
@@ -529,7 +529,19 @@ fn em(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>
             // sums and denoms to update cluster centers
             update_final(loci, &sums, &denoms, &mut cluster_centers);
             iterations += 1;
-            eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\t{}\tkhmloss: {}", thread_num, epoch, iterations, temp_step, log_binom_loss, log_loss_change, khm_log_loss);
+            // using the final log probabilities, get the number of clusters assigned
+            let mut assigned_vec: Vec<bool> = vec![false; params.num_clusters];
+            for final_log_probability in &final_log_probabilities {
+                let index_of_max: Option<usize> = final_log_probability.iter().enumerate().max_by(|(_, a), (_, b)| a.total_cmp(b)).map(|(index, _)| index);
+                assigned_vec[index_of_max.unwrap()] = true;
+            }
+            let mut num_of_assigned = 0;
+            for entry in assigned_vec {
+                if entry == true {
+                    num_of_assigned += 1;
+                }
+            }
+            eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\t{}\tkhmloss: {} assigned {}", thread_num, epoch, iterations, temp_step, log_binom_loss, log_loss_change, khm_log_loss, num_of_assigned);
         }
     }
     (total_log_loss, final_log_probabilities)
