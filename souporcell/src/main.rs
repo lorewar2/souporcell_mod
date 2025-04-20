@@ -810,7 +810,7 @@ fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, p
             }
         }
         else if original_centers.len() > params.num_clusters * 10 {
-            // remove like 5
+            // remove like 10
             eprintln!("removing {}", 10);
             if closest_2_clusters.len() > 10 { 
                 for index in 0..10 {
@@ -823,8 +823,21 @@ fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, p
                 }
             }
         } 
-        else if original_centers.len() > params.num_clusters * 2 {
-            //remove 1
+        else if original_centers.len() > params.num_clusters * 5 {
+            // remove like 10
+            eprintln!("removing {}", 5);
+            if closest_2_clusters.len() > 5{ 
+                for index in 0..5 {
+                    original_centers.remove(closest_2_clusters[index].0);
+                }
+            }
+            else {
+                for index in 0..closest_2_clusters.len() {
+                    original_centers.remove(closest_2_clusters[index].0);
+                }
+            }
+        }
+        else {
             eprintln!("removing {}", 1);
             original_centers.remove(closest_2_clusters[0].0);
         }
