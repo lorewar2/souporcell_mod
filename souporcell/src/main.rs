@@ -20,7 +20,7 @@ use clap::App;
 const TEMP: f32 = 12.0;
 const MULTIPLY_CLUS: usize = 10;
 const READ_ALT_REF_MIN: &str = "12";
-const USE_KHM_VAR: i32 = 3; // -1 em without temp 0 em 1 khm 2 khm with da 3 khm with beta binomial
+const USE_KHM_VAR: i32 = 1; // (0: EM) (1: KHM) (2: KHM BETA) 
 const P_DIM: f32 = 64.0;
 
 fn main() {
@@ -37,6 +37,7 @@ struct ThreadData {
     rng: StdRng,
     solves_per_thread: usize,
     thread_num: usize,
+    max_clusters: usize,
 }
 
 impl ThreadData {
@@ -47,6 +48,7 @@ impl ThreadData {
             rng: SeedableRng::from_seed(seed),
             solves_per_thread: solves_per_thread,
             thread_num: thread_num,
+            max_clusters: 0,
         }
     }
 }
@@ -64,37 +66,37 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
             // the main steps here, multiple restarts with threads 
             // INITIALIZING CLUSTERS
             let cluster_centers: Vec<Vec<f32>> = init_cluster_centers(loci_used, &cell_data, params, &mut thread_data.rng);
-            let (log_loss, log_probabilities);
+            let (log_loss, log_probabilities, current_max);
             // Main method
-            if USE_KHM_VAR == -1 {
-                (log_loss, log_probabilities) = em_without_temp(loci_used, cluster_centers, &cell_data ,params, iteration, thread_data.thread_num);
-            }
-            else if USE_KHM_VAR == 1 {
-                (log_loss, log_probabilities) = khm(loci_used, cluster_centers, &cell_data ,params, iteration, thread_data.thread_num);
+            if USE_KHM_VAR == 1 {
+                (log_loss, log_probabilities, current_max) = khm_temp_annealing(loci_used, cluster_centers, &cell_data ,params, iteration, thread_data.thread_num);
             }
             else if USE_KHM_VAR == 2 {
-                (log_loss, log_probabilities) = khm_temp_annealing(loci_used, cluster_centers, &cell_data ,params, iteration, thread_data.thread_num);
-            }
-            else if USE_KHM_VAR == 3 {
-                (log_loss, log_probabilities) = khm_beta_binom(loci_used, cluster_centers, &cell_data ,params, iteration, thread_data.thread_num);
+                (log_loss, log_probabilities, current_max) = khm_beta_binom(loci_used, cluster_centers, &cell_data ,params, iteration, thread_data.thread_num);
             }
             else {
-                (log_loss, log_probabilities) = em(loci_used, cluster_centers, &cell_data ,params, iteration, thread_data.thread_num);
+                (log_loss, log_probabilities, current_max) = em(loci_used, cluster_centers, &cell_data ,params, iteration, thread_data.thread_num);
             }
-            if log_loss > thread_data.best_total_log_probability {
-                thread_data.best_total_log_probability = log_loss;
-                thread_data.best_log_probabilities = log_probabilities;
+            if current_max >= thread_data.max_clusters {
+                if log_loss > thread_data.best_total_log_probability {
+                    thread_data.best_total_log_probability = log_loss;
+                    thread_data.best_log_probabilities = log_probabilities;
+                }
             }
-            eprintln!("thread {} iteration {} done with {}, best so far {}", 
-                thread_data.thread_num, iteration, log_loss, thread_data.best_total_log_probability);
+            eprintln!("thread {} iteration {} done with {}, best so far {} best clusters {}", 
+                thread_data.thread_num, iteration, log_loss, thread_data.best_total_log_probability, thread_data.max_clusters);
         }
     });
     let mut best_log_probability = f32::NEG_INFINITY;
     let mut best_log_probabilities: Vec<Vec<f32>> = Vec::new();
+    let mut best_clusters = 0;
     for thread_data in threads {
-        if thread_data.best_total_log_probability > best_log_probability {
-            best_log_probability = thread_data.best_total_log_probability;
-            best_log_probabilities = thread_data.best_log_probabilities;
+        if thread_data.max_clusters >= best_clusters {
+            if thread_data.best_total_log_probability > best_log_probability {
+                best_clusters = thread_data.max_clusters;
+                best_log_probability = thread_data.best_total_log_probability;
+                best_log_probabilities = thread_data.best_log_probabilities;
+            }
         }
     }
     eprintln!("best total log probability = {}", best_log_probability);
@@ -116,7 +118,7 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
 
 }
 
-fn khm(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>) {
+fn em(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>, usize) {
     // sums and denoms for likelihood calculation
     let mut sums: Vec<Vec<f32>> = Vec::new();
     let mut denoms: Vec<Vec<f32>> = Vec::new();
@@ -128,47 +130,80 @@ fn khm(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData
             denoms[cluster].push(2.0); // psuedocounts
         }
     }
-    let mut total_log_loss = f32::NEG_INFINITY;
-    let mut final_log_probabilities = Vec::new();
-    let mut iterations = 0;
+    // for testing
+    //cluster_centers = init_clusters_with_optimal (loci, params, cell_data);
+    //e qual prior
     let log_prior: f32 = (1.0/(params.num_clusters as f32)).ln();
-
+    // current iteration
+    let mut good_clusters = vec![];
+    let mut iterations = 0;
+    let mut total_log_loss = f32::NEG_INFINITY;
+    let mut final_total_log_loss = f32::NEG_INFINITY;
+    let mut final_log_probabilities = Vec::new();
     for _cell in 0..cell_data.len() {
         final_log_probabilities.push(Vec::new());
     }
+    let log_loss_change_limit = 0.01*(cell_data.len() as f32);
+    let temp_steps = 9;
+    let mut current_max = 0;
     let mut last_log_loss = f32::NEG_INFINITY;
-    let mut log_loss_change;
-    while iterations < 20 {
-        // should prob calcualte the performance metric too, to quit
-        let mut log_binom_loss = 0.0;
-        // reset sum and denoms
-        reset_sums_denoms(loci, &mut sums, &mut denoms, params.num_clusters);
-        let mut cell_khm_perfs = vec![];
-        for (celldex, cell) in cell_data.iter().enumerate() {
-            // both log loss and min loss clus
-            let (log_binoms, min_clus) = binomial_loss_with_min_index(cell, &cluster_centers, log_prior);
-            // calculate the cell khm perf function
-            cell_khm_perfs.push((params.num_clusters as f32).ln() - calculate_khm_perf_for_cell(&log_binoms));
-            // for total loss
-            log_binom_loss += log_sum_exp(&log_binoms);
-            // calculate the q and q sum for cell wrt each cluster
-            let (q_vec, q_sum) = calculate_q_for_current_cell(&log_binoms, min_clus);
-            // adjust with temp
-            update_centers_hm(&mut sums, &mut denoms, cell, &q_vec, q_sum);
-            final_log_probabilities[celldex] = log_binoms;
+    for temp_step in 0..temp_steps {
+        //eprintln!("temp step {}",temp_step);
+        let mut log_loss_change = 10000.0;
+        while (log_loss_change > log_loss_change_limit) && (iterations < 1000) {
+            let mut log_binom_loss = 0.0;
+            // reset sum and denoms
+            reset_sums_denoms(loci, &mut sums, &mut denoms, params.num_clusters);
+            let mut cell_khm_perfs = vec![];
+            for (celldex, cell) in cell_data.iter().enumerate() {
+                // get the bionomial loss for the cell with current cluster centers
+                let log_binoms = binomial_loss(cell, &cluster_centers, log_prior);
+                cell_khm_perfs.push((params.num_clusters as f32).ln() - calculate_khm_perf_for_cell(&log_binoms));
+                // for total loss
+                log_binom_loss += log_sum_exp(&log_binoms);
+                // temp determinstic annealing
+                let mut temp = (cell.total_alleles / (TEMP * 2.0f32.powf(temp_step as f32))).max(1.0);
+                if temp_step == temp_steps - 1 { temp = 1.0; }
+                // apply temp for loss
+                let adjusted_log_binoms = normalize_in_log_with_temp(&log_binoms, temp);
+                // update sums and denoms
+                update_centers_average(&mut sums, &mut denoms, cell, &adjusted_log_binoms);
+                final_log_probabilities[celldex] = log_binoms;
+            }
+            let khm_log_loss = log_sum_exp(&cell_khm_perfs);
+            total_log_loss = log_binom_loss;
+            log_loss_change = log_binom_loss - last_log_loss;
+            last_log_loss = log_binom_loss;
+            // sums and denoms to update cluster centers
+            update_final(loci, &sums, &denoms, &mut cluster_centers);
+            iterations += 1;
+            // using the final log probabilities, get the number of clusters assigned
+            let mut assigned_vec: Vec<usize> = vec![0; params.num_clusters];
+            for final_log_probability in &final_log_probabilities {
+                let index_of_max: Option<usize> = final_log_probability.iter().enumerate().max_by(|(_, a), (_, b)| a.total_cmp(b)).map(|(index, _)| index);
+                assigned_vec[index_of_max.unwrap()] += 1;
+            }
+            let mut num_of_assigned = 0;
+            for entry in assigned_vec {
+                // test for 400 cell per donor
+                if entry > 300 {
+                    num_of_assigned += 1;
+                }
+            }
+            if num_of_assigned >= current_max {
+                eprintln!("GOOD ONE");
+                current_max = num_of_assigned;
+                good_clusters = final_log_probabilities.clone();
+                final_total_log_loss = total_log_loss;
+
+            }
+            eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\t{}\tkhmloss: {} assigned {}", thread_num, epoch, iterations, temp_step, log_binom_loss, log_loss_change, khm_log_loss, num_of_assigned);
         }
-        let khm_log_loss = log_sum_exp(&cell_khm_perfs);
-        total_log_loss = log_binom_loss;
-        log_loss_change = log_binom_loss - last_log_loss;
-        last_log_loss = log_binom_loss;
-        update_final(loci, &sums, &denoms, &mut cluster_centers);
-        iterations += 1;
-        eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\tkhm_loss: {}", thread_num, epoch, iterations, log_binom_loss, log_loss_change, khm_log_loss);
     }
-    (total_log_loss, final_log_probabilities)
+    (final_total_log_loss, good_clusters, current_max)
 }
 
-fn khm_temp_annealing(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>) {
+fn khm_temp_annealing(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>, usize) {
     // sums and denoms for likelihood calculation
     let mut sums: Vec<Vec<f32>> = Vec::new();
     let mut denoms: Vec<Vec<f32>> = Vec::new();
@@ -180,16 +215,20 @@ fn khm_temp_annealing(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data
             denoms[cluster].push(2.0); // psuedocounts
         }
     }
-    let mut total_log_loss = f32::NEG_INFINITY;
-    let mut final_log_probabilities = Vec::new();
-    let mut iterations = 0;
     let log_prior: f32 = (1.0/(params.num_clusters as f32)).ln();
+    // current iteration
+    let mut good_clusters = vec![];
+    let mut iterations = 0;
+    let mut total_log_loss = f32::NEG_INFINITY;
+    let mut final_total_log_loss = f32::NEG_INFINITY;
+    let mut final_log_probabilities = Vec::new();
 
     for _cell in 0..cell_data.len() {
         final_log_probabilities.push(Vec::new());
     }
     let log_loss_change_limit = 0.01 * (cell_data.len() as f32);
     let temp_steps = 9;
+    let mut current_max = 0;
     let mut last_log_loss = f32::NEG_INFINITY;
     for temp_step in 0..temp_steps {
         //eprintln!("temp step {}",temp_step);
@@ -230,13 +269,33 @@ fn khm_temp_annealing(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data
             last_log_loss = log_binom_loss;
             update_final(loci, &sums, &denoms, &mut cluster_centers);
             iterations += 1;
-            eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\tkhm_loss: {}", thread_num, epoch, iterations, log_binom_loss, log_loss_change, khm_log_loss);
+            // using the final log probabilities, get the number of clusters assigned
+            let mut assigned_vec: Vec<usize> = vec![0; params.num_clusters];
+            for final_log_probability in &final_log_probabilities {
+                let index_of_max: Option<usize> = final_log_probability.iter().enumerate().max_by(|(_, a), (_, b)| a.total_cmp(b)).map(|(index, _)| index);
+                assigned_vec[index_of_max.unwrap()] += 1;
+            }
+            let mut num_of_assigned = 0;
+            for entry in assigned_vec {
+                // test for 400 cell per donor
+                if entry > 300 {
+                    num_of_assigned += 1;
+                }
+            }
+            if num_of_assigned >= current_max {
+                eprintln!("GOOD ONE");
+                current_max = num_of_assigned;
+                good_clusters = final_log_probabilities.clone();
+                final_total_log_loss = total_log_loss;
+
+            }
+            eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\t{}\tkhmloss: {} assigned {}", thread_num, epoch, iterations, temp_step, log_binom_loss, log_loss_change, khm_log_loss, num_of_assigned);
         }
     }
-    (total_log_loss, final_log_probabilities)
+    (final_total_log_loss, good_clusters, current_max)
 }
 
-fn khm_beta_binom(loci: usize, mut _cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>) {
+fn khm_beta_binom(loci: usize, mut _cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>, usize) {
     // get beta cluster centers
     let mut beta_cluster_centers = init_alt_ref_cluster_centers_kmeans_pp(loci, cell_data, params);
     // sums and denoms for likelihood calculation
@@ -250,16 +309,20 @@ fn khm_beta_binom(loci: usize, mut _cluster_centers: Vec<Vec<f32>>, cell_data: &
             ref_sums[cluster].push(1.0); // psuedocounts
         }
     }
-    let mut total_log_loss = f32::NEG_INFINITY;
-    let mut final_log_probabilities = Vec::new();
-    let mut iterations = 0;
     let log_prior: f32 = (1.0/(params.num_clusters as f32)).ln();
+    // current iteration
+    let mut good_clusters = vec![];
+    let mut iterations = 0;
+    let mut total_log_loss = f32::NEG_INFINITY;
+    let mut final_total_log_loss = f32::NEG_INFINITY;
+    let mut final_log_probabilities = Vec::new();
 
     for _cell in 0..cell_data.len() {
         final_log_probabilities.push(Vec::new());
     }
     let log_loss_change_limit = 0.01 * (cell_data.len() as f32);
     let temp_steps = 9;
+    let mut current_max = 0;
     let mut last_log_loss = f32::NEG_INFINITY;
     for temp_step in 0..temp_steps {
         //eprintln!("temp step {}",temp_step);
@@ -299,10 +362,30 @@ fn khm_beta_binom(loci: usize, mut _cluster_centers: Vec<Vec<f32>>, cell_data: &
             last_log_loss = log_binom_loss;
             update_final_beta(loci, &alt_sums, &ref_sums, &mut beta_cluster_centers);
             iterations += 1;
-            eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\tkhm_loss: {}", thread_num, epoch, iterations, log_binom_loss, log_loss_change, khm_log_loss);
+            // using the final log probabilities, get the number of clusters assigned
+            let mut assigned_vec: Vec<usize> = vec![0; params.num_clusters];
+            for final_log_probability in &final_log_probabilities {
+                let index_of_max: Option<usize> = final_log_probability.iter().enumerate().max_by(|(_, a), (_, b)| a.total_cmp(b)).map(|(index, _)| index);
+                assigned_vec[index_of_max.unwrap()] += 1;
+            }
+            let mut num_of_assigned = 0;
+            for entry in assigned_vec {
+                // test for 400 cell per donor
+                if entry > 300 {
+                    num_of_assigned += 1;
+                }
+            }
+            if num_of_assigned >= current_max {
+                eprintln!("GOOD ONE");
+                current_max = num_of_assigned;
+                good_clusters = final_log_probabilities.clone();
+                final_total_log_loss = total_log_loss;
+
+            }
+            eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\t{}\tkhmloss: {} assigned {}", thread_num, epoch, iterations, temp_step, log_binom_loss, log_loss_change, khm_log_loss, num_of_assigned);
         }
     }
-    (total_log_loss, final_log_probabilities)
+    (final_total_log_loss, good_clusters, current_max)
 }
 
 fn update_final_beta(loci: usize, alt_sums: &Vec<Vec<f32>>, ref_sums: &Vec<Vec<f32>>, cluster_centers: &mut Vec<Vec<(f32, f32)>>) {
@@ -473,80 +556,6 @@ fn calculate_q_for_current_cell (log_loss_vec: &Vec<f32>, min_clus: usize) -> (V
     (q_vec, q_sum)
 }
 
-fn em(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>) {
-    // sums and denoms for likelihood calculation
-    let mut sums: Vec<Vec<f32>> = Vec::new();
-    let mut denoms: Vec<Vec<f32>> = Vec::new();
-    for cluster in 0..params.num_clusters {
-        sums.push(Vec::new());
-        denoms.push(Vec::new());
-        for _index in 0..loci {
-            sums[cluster].push(1.0);
-            denoms[cluster].push(2.0); // psuedocounts
-        }
-    }
-    // for testing
-    //cluster_centers = init_clusters_with_optimal (loci, params, cell_data);
-    //e qual prior
-    let log_prior: f32 = (1.0/(params.num_clusters as f32)).ln();
-    // current iteration
-    let mut iterations = 0;
-    let mut total_log_loss = f32::NEG_INFINITY;
-    let mut final_log_probabilities = Vec::new();
-    for _cell in 0..cell_data.len() {
-        final_log_probabilities.push(Vec::new());
-    }
-    let log_loss_change_limit = 0.01*(cell_data.len() as f32);
-    let temp_steps = 9;
-    let mut last_log_loss = f32::NEG_INFINITY;
-    for temp_step in 0..temp_steps {
-        //eprintln!("temp step {}",temp_step);
-        let mut log_loss_change = 10000.0;
-        while (log_loss_change > log_loss_change_limit) && (iterations < 1000) {
-            let mut log_binom_loss = 0.0;
-            // reset sum and denoms
-            reset_sums_denoms(loci, &mut sums, &mut denoms, params.num_clusters);
-            let mut cell_khm_perfs = vec![];
-            for (celldex, cell) in cell_data.iter().enumerate() {
-                // get the bionomial loss for the cell with current cluster centers
-                let log_binoms = binomial_loss(cell, &cluster_centers, log_prior);
-                cell_khm_perfs.push((params.num_clusters as f32).ln() - calculate_khm_perf_for_cell(&log_binoms));
-                // for total loss
-                log_binom_loss += log_sum_exp(&log_binoms);
-                // temp determinstic annealing
-                let mut temp = (cell.total_alleles / (TEMP * 2.0f32.powf(temp_step as f32))).max(1.0);
-                if temp_step == temp_steps - 1 { temp = 1.0; }
-                // apply temp for loss
-                let adjusted_log_binoms = normalize_in_log_with_temp(&log_binoms, temp);
-                // update sums and denoms
-                update_centers_average(&mut sums, &mut denoms, cell, &adjusted_log_binoms);
-                final_log_probabilities[celldex] = log_binoms;
-            }
-            let khm_log_loss = log_sum_exp(&cell_khm_perfs);
-            total_log_loss = log_binom_loss;
-            log_loss_change = log_binom_loss - last_log_loss;
-            last_log_loss = log_binom_loss;
-            // sums and denoms to update cluster centers
-            update_final(loci, &sums, &denoms, &mut cluster_centers);
-            iterations += 1;
-            // using the final log probabilities, get the number of clusters assigned
-            let mut assigned_vec: Vec<bool> = vec![false; params.num_clusters];
-            for final_log_probability in &final_log_probabilities {
-                let index_of_max: Option<usize> = final_log_probability.iter().enumerate().max_by(|(_, a), (_, b)| a.total_cmp(b)).map(|(index, _)| index);
-                assigned_vec[index_of_max.unwrap()] = true;
-            }
-            let mut num_of_assigned = 0;
-            for entry in assigned_vec {
-                if entry == true {
-                    num_of_assigned += 1;
-                }
-            }
-            eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\t{}\tkhmloss: {} assigned {}", thread_num, epoch, iterations, temp_step, log_binom_loss, log_loss_change, khm_log_loss, num_of_assigned);
-        }
-    }
-    (total_log_loss, final_log_probabilities)
-}
-
 fn init_clusters_with_optimal (loci: usize, params: &Params, cell_data: &Vec<CellData>) -> Vec<Vec<f32>> {
     eprintln!("Optimal clusters start");
     let mut centers: Vec<Vec<f32>> = Vec::new();
@@ -574,65 +583,6 @@ fn init_clusters_with_optimal (loci: usize, params: &Params, cell_data: &Vec<Cel
     }
     eprintln!("Optimal clusters end");
     centers
-}
-
-fn em_without_temp(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>) {
-    // sums and denoms for likelihood calculation
-    let mut sums: Vec<Vec<f32>> = Vec::new();
-    let mut denoms: Vec<Vec<f32>> = Vec::new();
-    for cluster in 0..params.num_clusters {
-        sums.push(Vec::new());
-        denoms.push(Vec::new());
-        for _index in 0..loci {
-            sums[cluster].push(1.0);
-            denoms[cluster].push(2.0); // psuedocounts
-        }
-    }
-    //e qual prior
-    let log_prior: f32 = (1.0/(params.num_clusters as f32)).ln();
-    // current iteration
-    let mut iterations = 0;
-    let mut total_log_loss = f32::NEG_INFINITY;
-    let mut final_log_probabilities = Vec::new();
-    for _cell in 0..cell_data.len() {
-        final_log_probabilities.push(Vec::new());
-    }
-    let log_loss_change_limit = 0.01*(cell_data.len() as f32);
-    let temp_steps = 9;
-    let mut last_log_loss = f32::NEG_INFINITY;
-    for temp_step in 0..temp_steps {
-        //eprintln!("temp step {}",temp_step);
-        let mut log_loss_change = 10000.0;
-        while (log_loss_change > log_loss_change_limit) && (iterations < 1000) {
-            let mut log_binom_loss = 0.0;
-            // reset sum and denoms
-            reset_sums_denoms(loci, &mut sums, &mut denoms, params.num_clusters);
-            let mut cell_khm_perfs = vec![];
-            for (celldex, cell) in cell_data.iter().enumerate() {
-                // get the bionomial loss for the cell with current cluster centers
-                let log_binoms = binomial_loss(cell, &cluster_centers, log_prior);
-                cell_khm_perfs.push((params.num_clusters as f32).ln() - calculate_khm_perf_for_cell(&log_binoms));
-                // for total loss 
-                log_binom_loss += log_sum_exp(&log_binoms);
-                // temp determinstic annealing
-                let temp = 1.0;
-                // apply temp for loss
-                let adjusted_log_binoms = normalize_in_log_with_temp(&log_binoms, temp);
-                // update sums and denoms
-                update_centers_average(&mut sums, &mut denoms, cell, &adjusted_log_binoms);
-                final_log_probabilities[celldex] = log_binoms;
-            }
-            let khm_log_loss = log_sum_exp(&cell_khm_perfs);
-            total_log_loss = log_binom_loss;
-            log_loss_change = log_binom_loss - last_log_loss;
-            last_log_loss = log_binom_loss;
-            // sums and denoms to update cluster centers
-            update_final(loci, &sums, &denoms, &mut cluster_centers);
-            iterations += 1;
-            eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\t{}\tkhmloss: {}", thread_num, epoch, iterations, temp_step, log_binom_loss, log_loss_change, khm_log_loss);
-        }
-    }
-    (total_log_loss, final_log_probabilities)
 }
 
 fn binomial_loss(cell_data: &CellData, cluster_centers: &Vec<Vec<f32>>, log_prior: f32) -> Vec<f32> {
@@ -825,29 +775,59 @@ fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, p
     // go through the clusters and get the two clusters which are closest with each other
     while original_centers.len() != params.num_clusters {
         eprintln!("Current number of clusters {}", original_centers.len());   
-        let mut closest_2_clusters = (0, 0);
-        let mut fartherst_2_clusters = (0, 0);
+        let mut closest_2_clusters = vec![];
         let mut min_dist = f32::MAX;
-        let mut max_dist = f32::MIN;
         // go through each cluster and compare it to each other 2 loops i guess
         for (index1, cluster1) in original_centers.iter().enumerate() {
             for (index2, cluster2) in original_centers.iter().enumerate().skip(index1) {
                 if index1 != index2 {
                     let curr_dist = cluster_compare(cluster1, cluster2, &loci_weights);
                     if curr_dist < min_dist {
-                        closest_2_clusters = (index1, index2);
+                        closest_2_clusters.push((index1, index2));
                         min_dist = curr_dist;
-                    }
-                    if curr_dist > max_dist {
-                        fartherst_2_clusters = (index1, index2);
-                        max_dist = curr_dist;
                     }
                 }
             }
         }
-        eprintln!("Min distance {} closeset clusters {:?};;; Max distance {} farthest clusters {:?}", min_dist, closest_2_clusters, max_dist, fartherst_2_clusters); 
+        closest_2_clusters.reverse();
+        eprintln!("Min distance {} closeset clusters {:?}", min_dist, closest_2_clusters[0]); 
         // save the two clusters which are closest and merge them together, del on for now
-        original_centers.remove(closest_2_clusters.0);
+        if original_centers.len() > params.num_clusters * 50 { 
+            // remove 100 or all
+            if closest_2_clusters.len() > 100 {
+                //remove 100
+                eprintln!("removing 100");
+                for index in 0..100 {
+                    original_centers.remove(closest_2_clusters[index].0);
+                }
+            }
+            else {
+                //remove all except last
+                eprintln!("removing {}", original_centers.len() - 1);
+                for index in 0..original_centers.len() - 1 {
+                    original_centers.remove(closest_2_clusters[index].0);
+                }
+            }
+        }
+        else if original_centers.len() > params.num_clusters * 10 {
+            // remove like 5
+            eprintln!("removing {}", 5);
+            if closest_2_clusters.len() > 5 { 
+                for index in 0..5 {
+                    original_centers.remove(closest_2_clusters[index].0);
+                }
+            }
+            else {
+                for index in 0..original_centers.len() {
+                    original_centers.remove(closest_2_clusters[index].0);
+                }
+            }
+        } 
+        else if original_centers.len() > params.num_clusters * 2 {
+            //remove 1
+            eprintln!("removing {}", 1);
+            original_centers.remove(closest_2_clusters[0].0);
+        }
     }
     original_centers
 }
