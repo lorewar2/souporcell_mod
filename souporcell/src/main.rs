@@ -792,7 +792,7 @@ fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, p
         closest_2_clusters.reverse();
         eprintln!("Min distance {} closeset clusters {:?}", min_dist, closest_2_clusters[0]); 
         // save the two clusters which are closest and merge them together, del on for now
-        if original_centers.len() > params.num_clusters * 50 { 
+        if original_centers.len() > params.num_clusters * 20 { 
             // remove 100 or all
             if closest_2_clusters.len() > 100 {
                 //remove 100
@@ -811,9 +811,9 @@ fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, p
         }
         else if original_centers.len() > params.num_clusters * 10 {
             // remove like 5
-            eprintln!("removing {}", 5);
-            if closest_2_clusters.len() > 5 { 
-                for index in 0..5 {
+            eprintln!("removing {}", 10);
+            if closest_2_clusters.len() > 10 { 
+                for index in 0..10 {
                     original_centers.remove(closest_2_clusters[index].0);
                 }
             }
@@ -1051,8 +1051,8 @@ fn load_params() -> Params {
     let min_ref = min_ref.to_string().parse::<u32>().unwrap();
     let restarts = params.value_of("restarts").unwrap_or("100");
     let restarts = restarts.to_string().parse::<u32>().unwrap();
-    let initialization_strategy = params.value_of("initialization_strategy").unwrap_or("random_uniform");
-    //let initialization_strategy = params.value_of("initialization_strategy").unwrap_or("overcluster");
+    //let initialization_strategy = params.value_of("initialization_strategy").unwrap_or("random_uniform");
+    let initialization_strategy = params.value_of("initialization_strategy").unwrap_or("overcluster");
     let initialization_strategy = match initialization_strategy {
         "kmeans++" => ClusterInit::KmeansPP,
         "random_uniform" => ClusterInit::RandomUniform,
