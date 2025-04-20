@@ -804,7 +804,7 @@ fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, p
             else {
                 //remove all except last
                 eprintln!("removing {}", original_centers.len() - 1);
-                for index in 0..original_centers.len() - 1 {
+                for index in 0..closest_2_clusters.len() - 1 {
                     original_centers.remove(closest_2_clusters[index].0);
                 }
             }
@@ -818,7 +818,7 @@ fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, p
                 }
             }
             else {
-                for index in 0..original_centers.len() {
+                for index in 0..closest_2_clusters.len() {
                     original_centers.remove(closest_2_clusters[index].0);
                 }
             }
