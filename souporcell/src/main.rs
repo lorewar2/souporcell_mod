@@ -92,15 +92,19 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
     let mut best_log_probabilities: Vec<Vec<f32>> = Vec::new();
     let mut best_clusters = 0;
     for thread_data in threads {
-        if thread_data.max_clusters >= best_clusters {
+        if thread_data.max_clusters > best_clusters {
+            best_clusters = thread_data.max_clusters;
+            best_log_probability = thread_data.best_total_log_probability;
+            best_log_probabilities = thread_data.best_log_probabilities;
+        }
+        else if thread_data.max_clusters == best_clusters {
             if thread_data.best_total_log_probability > best_log_probability {
-                best_clusters = thread_data.max_clusters;
                 best_log_probability = thread_data.best_total_log_probability;
                 best_log_probabilities = thread_data.best_log_probabilities;
             }
         }
     }
-    eprintln!("best total log probability = {}", best_log_probability);
+    eprintln!("best total log probability = {} clusters = {}", best_log_probability, best_clusters);
     for (bc, log_probs) in barcodes.iter().zip(best_log_probabilities.iter()) {
         let mut best = 0;
         let mut best_lp = f32::NEG_INFINITY;
