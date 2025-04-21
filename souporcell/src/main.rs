@@ -81,6 +81,7 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
                 if log_loss > thread_data.best_total_log_probability {
                     thread_data.best_total_log_probability = log_loss;
                     thread_data.best_log_probabilities = log_probabilities;
+                    thread_data.max_clusters = current_max;
                 }
             }
             eprintln!("thread {} iteration {} done with {}, best so far {} best clusters {}", 
@@ -376,7 +377,6 @@ fn khm_beta_binom(loci: usize, mut _cluster_centers: Vec<Vec<f32>>, cell_data: &
                 }
             }
             if num_of_assigned >= current_max {
-                eprintln!("GOOD ONE");
                 current_max = num_of_assigned;
                 good_clusters = final_log_probabilities.clone();
                 final_total_log_loss = total_log_loss;
@@ -793,24 +793,20 @@ fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, p
         eprintln!("Min distance {} closeset clusters {:?}", min_dist, closest_2_clusters[0]); 
         // save the two clusters which are closest and merge them together, del on for now
         if original_centers.len() > params.num_clusters * 20 { 
-            // remove 100 or all
             if closest_2_clusters.len() > 100 {
-                //remove 100
-                eprintln!("removing 100");
+                eprintln!("removing {}", 100);
                 for index in 0..100 {
                     original_centers.remove(closest_2_clusters[index].0);
                 }
             }
             else {
-                //remove all except last
-                eprintln!("removing {}", original_centers.len() - 1);
-                for index in 0..closest_2_clusters.len() - 1 {
+                eprintln!("removing {}", closest_2_clusters.len());
+                for index in 0..closest_2_clusters.len() {
                     original_centers.remove(closest_2_clusters[index].0);
                 }
             }
         }
         else if original_centers.len() > params.num_clusters * 10 {
-            // remove like 10
             eprintln!("removing {}", 10);
             if closest_2_clusters.len() > 10 { 
                 for index in 0..10 {
@@ -818,13 +814,13 @@ fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, p
                 }
             }
             else {
+                eprintln!("removing {}", closest_2_clusters.len());
                 for index in 0..closest_2_clusters.len() {
                     original_centers.remove(closest_2_clusters[index].0);
                 }
             }
         } 
         else if original_centers.len() > params.num_clusters * 5 {
-            // remove like 10
             eprintln!("removing {}", 5);
             if closest_2_clusters.len() > 5{ 
                 for index in 0..5 {
@@ -832,6 +828,7 @@ fn init_cluster_centers_overclustering(loci: usize, cell_data: &Vec<CellData>, p
                 }
             }
             else {
+                eprintln!("removing {}", closest_2_clusters.len());
                 for index in 0..closest_2_clusters.len() {
                     original_centers.remove(closest_2_clusters[index].0);
                 }
