@@ -303,18 +303,102 @@ fn khm_temp_annealing(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data
     }
     // if two shot
     if TWO_SHOT {
+        // replace bad ones with these
+        let new_clusters = init_cluster_centers_uniform_no_rng(loci, params.num_clusters / 2);
+        let mut lock_clusters = vec![];
         // find top 50% clusters
         min_loss_for_each_cluster.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
         // go through the loss, find the clusters which has the min loss in 50 percentile
         for (index, (loss, cluster)) in min_loss_for_each_cluster.iter().enumerate() {
             eprintln!("{}:\tcluster\t{}\tloss\t{}", index, cluster, loss);
+            if index < (params.num_clusters / 2) {
+                lock_clusters.push(*cluster);
+            }
+            else {
+                cluster_centers[*cluster] = new_clusters[index - (params.num_clusters / 2)].clone();
+            }   
         }
-        // lock those clusters
-
-        // get  new random clusters for the rest and run
+        let mut iterations = 0;
+        // rerun with lock
+        for temp_step in 0..temp_steps {
+            //eprintln!("temp step {}",temp_step);
+            let mut log_loss_change = 10000.0;
+            while (log_loss_change > log_loss_change_limit) && (iterations < 1000) {
+                // should prob calcualte the performance metric too, to quit
+                let mut log_binom_loss = 0.0;
+                // reset sum and denoms
+                reset_sums_denoms(loci, &mut sums, &mut denoms, params.num_clusters);
+                let mut cell_khm_perfs = vec![];
+                for (celldex, cell) in cell_data.iter().enumerate() {
+                    // both log loss and min loss clus
+                    let (log_binoms, min_clus) = binomial_loss_with_min_index(cell, &cluster_centers, log_prior);
+                    // calculate the cell khm perf function
+                    cell_khm_perfs.push((params.num_clusters as f32).ln() - calculate_khm_perf_for_cell(&log_binoms));
+                    // for total loss
+                    log_binom_loss += log_sum_exp(&log_binoms);
+                    // calculate the q and q sum for cell wrt each cluster
+                    let (q_vec, q_sum) = calculate_q_for_current_cell(&log_binoms, min_clus);
+                    // calculate khm prob
+                    let mut khm_prob = vec![];
+                    for entry in q_vec {
+                        khm_prob.push(entry - q_sum); 
+                    }
+                    // temp determinstic annealing
+                    let mut temp = (cell.total_alleles / (TEMP * 2.0f32.powf(temp_step as f32))).max(1.0);
+                    if temp_step == temp_steps - 1 { temp = 1.0; }
+                    // adjust with temp
+                    let adjusted_log_binoms = normalize_in_log_with_temp(&khm_prob, temp);
+                    // update sums and denoms
+                    update_centers_average(&mut sums, &mut denoms, cell, &adjusted_log_binoms);
+                    final_log_probabilities[celldex] = log_binoms;
+                    
+                }
+                let khm_log_loss = log_sum_exp(&cell_khm_perfs);
+                total_log_loss = log_binom_loss;
+                log_loss_change = log_binom_loss - last_log_loss;
+                last_log_loss = log_binom_loss;
+                update_final_with_lock(loci, &sums, &denoms, &mut cluster_centers, &lock_clusters);
+                iterations += 1;
+                // using the final log probabilities, get the number of clusters assigned
+                let mut assigned_vec: Vec<usize> = vec![0; params.num_clusters];
+                for final_log_probability in &final_log_probabilities {
+                    let index_of_max: usize = final_log_probability.iter().enumerate().max_by(|(_, a), (_, b)| a.total_cmp(b)).map(|(index, _)| index).unwrap();
+                    min_loss_for_each_cluster[index_of_max].0 += final_log_probability[index_of_max];
+                    min_loss_for_each_cluster[index_of_max].1 = index_of_max;
+                    assigned_vec[index_of_max] += 1;
+                }
+                let mut num_of_assigned = 0;
+                for entry in assigned_vec {
+                    // test for 400 cell per donor
+                    if entry > 300 {
+                        num_of_assigned += 1;
+                    }
+                }
+                if num_of_assigned >= current_max {
+                    eprintln!("GOOD ONE");
+                    current_max = num_of_assigned;
+                    good_clusters = final_log_probabilities.clone();
+                    final_total_log_loss = total_log_loss;
+    
+                }
+                eprintln!("TwoSHOT binomial\t{}\t{}\t{}\t{}\t{}\t{}\tkhmloss: {} assigned {}", thread_num, epoch, iterations, temp_step, log_binom_loss, log_loss_change, khm_log_loss, num_of_assigned);
+            }
+        }
     }
     
     (final_total_log_loss, good_clusters, current_max)
+}
+
+fn update_final_with_lock(loci: usize, sums: &Vec<Vec<f32>>, denoms: &Vec<Vec<f32>>, cluster_centers: &mut Vec<Vec<f32>>, locked_clusters: &Vec<usize>) {
+    for locus in 0..loci {
+        for cluster in 0..sums.len() {
+            if locked_clusters.contains(&cluster) {
+                continue;
+            }
+            let update = sums[cluster][locus]/denoms[cluster][locus];
+            cluster_centers[cluster][locus] = update.min(0.99).max(0.01);
+        }
+    }
 }
 
 fn khm_beta_binom(loci: usize, mut _cluster_centers: Vec<Vec<f32>>, cell_data: &Vec<CellData>, params: &Params, epoch: usize, thread_num: usize) -> (f32, Vec<Vec<f32>>, usize) {
@@ -884,6 +968,18 @@ fn update_cluster_using_cell(cell_data: &CellData, cluster_centers: &mut Vec<Vec
 fn init_cluster_centers_uniform(loci: usize, params: &Params, rng: &mut StdRng) -> Vec<Vec<f32>> {
     let mut centers: Vec<Vec<f32>> = Vec::new();
     for cluster in 0..params.num_clusters {
+        centers.push(Vec::new());
+        for _ in 0..loci {
+            centers[cluster].push(rng.gen::<f32>().min(0.9999).max(0.0001));
+        }
+    }
+    centers
+}
+
+fn init_cluster_centers_uniform_no_rng(loci: usize, num_clusters: usize) -> Vec<Vec<f32>> {
+    let mut rng: StdRng = SeedableRng::seed_from_u64(loci as u64);
+    let mut centers: Vec<Vec<f32>> = Vec::new();
+    for cluster in 0..num_clusters {
         centers.push(Vec::new());
         for _ in 0..loci {
             centers[cluster].push(rng.gen::<f32>().min(0.9999).max(0.0001));
