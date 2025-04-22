@@ -17,11 +17,12 @@ use hashbrown::{HashMap,HashSet};
 use itertools::izip;
 use clap::App;
 
-const TEMP: f32 = 12.0;
+const TEMP: f32 = 10.5;
 const MULTIPLY_CLUS: usize = 10;
 const READ_ALT_REF_MIN: &str = "12";
-const USE_KHM_VAR: i32 = 1; // (0: EM) (1: KHM) (2: KHM BETA) 
-const P_DIM: f32 = 64.0;
+const USE_KHM_VAR: i32 = 1; // (0: EM) (1: KHM) (2: KHM BETA)
+const TWO_SHOT: bool = true;
+const P_DIM: f32 = 25.0;
 
 fn main() {
     let params = load_params();
@@ -227,6 +228,7 @@ fn khm_temp_annealing(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data
     let mut total_log_loss = f32::NEG_INFINITY;
     let mut final_total_log_loss = f32::NEG_INFINITY;
     let mut final_log_probabilities = Vec::new();
+    let mut min_loss_for_each_cluster = vec![(0.0, 0); params.num_clusters]; 
 
     for _cell in 0..cell_data.len() {
         final_log_probabilities.push(Vec::new());
@@ -277,8 +279,10 @@ fn khm_temp_annealing(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data
             // using the final log probabilities, get the number of clusters assigned
             let mut assigned_vec: Vec<usize> = vec![0; params.num_clusters];
             for final_log_probability in &final_log_probabilities {
-                let index_of_max: Option<usize> = final_log_probability.iter().enumerate().max_by(|(_, a), (_, b)| a.total_cmp(b)).map(|(index, _)| index);
-                assigned_vec[index_of_max.unwrap()] += 1;
+                let index_of_max: usize = final_log_probability.iter().enumerate().max_by(|(_, a), (_, b)| a.total_cmp(b)).map(|(index, _)| index).unwrap();
+                min_loss_for_each_cluster[index_of_max].0 += final_log_probability[index_of_max];
+                min_loss_for_each_cluster[index_of_max].1 = index_of_max;
+                assigned_vec[index_of_max] += 1;
             }
             let mut num_of_assigned = 0;
             for entry in assigned_vec {
@@ -297,6 +301,19 @@ fn khm_temp_annealing(loci: usize, mut cluster_centers: Vec<Vec<f32>>, cell_data
             eprintln!("binomial\t{}\t{}\t{}\t{}\t{}\t{}\tkhmloss: {} assigned {}", thread_num, epoch, iterations, temp_step, log_binom_loss, log_loss_change, khm_log_loss, num_of_assigned);
         }
     }
+    // if two shot
+    if TWO_SHOT {
+        // find top 50% clusters
+        min_loss_for_each_cluster.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        // go through the loss, find the clusters which has the min loss in 50 percentile
+        for (index, (loss, cluster)) in min_loss_for_each_cluster.iter().enumerate() {
+            eprintln!("{}:\tcluster\t{}\tloss\t{}", index, cluster, loss);
+        }
+        // lock those clusters
+
+        // get  new random clusters for the rest and run
+    }
+    
     (final_total_log_loss, good_clusters, current_max)
 }
 
