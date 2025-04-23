@@ -128,7 +128,7 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
             }
         }
         // find bottom 50% clusters
-        min_loss_for_each_cluster.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        min_loss_for_each_cluster.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         // go through the loss, find the clusters which has the min loss in 50 percentile
         for (index, (cluster, loss)) in min_loss_for_each_cluster.iter().enumerate() {
             eprintln!("{}:\tcluster\t{}\tloss\t{}", index, cluster, loss);
