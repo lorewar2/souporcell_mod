@@ -109,20 +109,20 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
     }
     if TWO_SHOT {
         let mut assigned_vec: Vec<usize> = vec![0; params.num_clusters];
-        let mut min_loss_for_each_cluster = vec![(0.0, 0); params.num_clusters];
+        let mut min_loss_for_each_cluster: Vec<(usize, f32)> = (0..params.num_clusters).map(|i| (i, 0.0)).collect();
         let mut lock_clusters = vec![];
         let mut replace_clusters= vec![];
         // find the cluster which has lowest loss for each cell
         for final_log_probability in &best_log_probabilities {
             let index_of_max: usize = final_log_probability.iter().enumerate().max_by(|(_, a), (_, b)| a.total_cmp(b)).map(|(index, _)| index).unwrap();
-            min_loss_for_each_cluster[index_of_max].0 += final_log_probability[index_of_max];
-            min_loss_for_each_cluster[index_of_max].1 = index_of_max;
+            min_loss_for_each_cluster[index_of_max].1 += final_log_probability[index_of_max];
+            min_loss_for_each_cluster[index_of_max].0 = index_of_max;
             assigned_vec[index_of_max] += 1;
         }
         // the cluster centers with less than 50 cells
         for (index, entry) in assigned_vec.iter().enumerate() {
             // test for 400 cell per donor
-            if *entry < 50 {
+            if *entry < 300 {
                 replace_clusters.push(index);
                 eprintln!("cluster with less than 50 {}", index);
             }
@@ -130,12 +130,15 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
         // find bottom 50% clusters
         min_loss_for_each_cluster.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
         // go through the loss, find the clusters which has the min loss in 50 percentile
-        for (index, (loss, cluster)) in min_loss_for_each_cluster.iter().enumerate() {
+        for (index, (cluster, loss)) in min_loss_for_each_cluster.iter().enumerate() {
             eprintln!("{}:\tcluster\t{}\tloss\t{}", index, cluster, loss);
-            if index < (params.num_clusters / 2) && !replace_clusters.contains(&cluster) {
+            if *loss > -1.0 {
+                replace_clusters.push(*cluster);
+            }
+            else if index < (params.num_clusters / 2) && !replace_clusters.contains(&cluster) {
                 lock_clusters.push(*cluster);
             }
-            else if !replace_clusters.contains(&index) {
+            else if !replace_clusters.contains(&cluster) {
                 replace_clusters.push(*cluster);
             }
         }
@@ -271,7 +274,7 @@ fn khm_temp_annealing(loci: usize, cluster_centers: &mut Vec<Vec<f32>>, cell_dat
             }
             let mut num_of_assigned = 0;
             for entry in assigned_vec {
-                if entry > 50 {
+                if entry > 300 {
                     num_of_assigned += 1;
                 }
             }
