@@ -135,7 +135,7 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
             if *loss > -1.0 {
                 replace_clusters.push(*cluster);
             }
-            else if index < (params.num_clusters / 2) && !replace_clusters.contains(&cluster) {
+            else if index < (8 * params.num_clusters / 10) && !replace_clusters.contains(&cluster) {
                 lock_clusters.push(*cluster);
             }
             else if !replace_clusters.contains(&cluster) {
@@ -159,8 +159,8 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
                 // replace_cluster_centers
                 let mut new_cluster_centers: Vec<Vec<f32>> = init_cluster_centers(loci_used, &cell_data, params, &mut thread_data.rng);
                 let mut prev_cluster_centers = thread_data.cluster_centers.clone();
-                for replace_center in &thread_data.replace_centers {
-                    prev_cluster_centers[*replace_center] = new_cluster_centers[*replace_center].clone();
+                for (index, replace_center) in thread_data.replace_centers.iter().enumerate() {
+                    prev_cluster_centers[*replace_center] = new_cluster_centers[index].clone();
                 }
                 let lock_centers = thread_data.lock_centers.clone();
                 let (log_loss, log_probabilities, current_max);
@@ -173,10 +173,23 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
                         thread_data.max_clusters = current_max;
                     }
                 }
-                eprintln!("thread {} iteration {} done with {}, best so far {} best clusters {}", 
+                eprintln!("thread {} iteration {} done with {}, best so far {} best clusters {}",
                     thread_data.thread_num, iteration, log_loss, thread_data.best_total_log_probability, thread_data.max_clusters);
             }
         });
+        for thread_data in threads {
+            if thread_data.max_clusters > best_clusters {
+                best_clusters = thread_data.max_clusters;
+                best_log_probability = thread_data.best_total_log_probability;
+                best_log_probabilities = thread_data.best_log_probabilities;
+            }
+            else if thread_data.max_clusters == best_clusters {
+                if thread_data.best_total_log_probability > best_log_probability {
+                    best_log_probability = thread_data.best_total_log_probability;
+                    best_log_probabilities = thread_data.best_log_probabilities;
+                }
+            }
+        }
     }
     eprintln!("best total log probability = {} clusters = {}", best_log_probability, best_clusters);
     for (bc, log_probs) in barcodes.iter().zip(best_log_probabilities.iter()) {
@@ -191,7 +204,7 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
         print!("{}\t{}\t",bc, best);
         for index in 0..log_probs.len() {
             print!("{}",log_probs[index]);
-            if index < log_probs.len() - 1 { print!("\t"); } 
+            if index < log_probs.len() - 1 { print!("\t"); }
         } print!("\n");
     }
 
