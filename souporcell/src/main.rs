@@ -115,7 +115,9 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
         // find the cluster which has lowest loss for each cell
         for final_log_probability in &best_log_probabilities {
             let index_of_max: usize = final_log_probability.iter().enumerate().max_by(|(_, a), (_, b)| a.total_cmp(b)).map(|(index, _)| index).unwrap();
-            min_loss_for_each_cluster[index_of_max].1 += final_log_probability[index_of_max];
+            let sum: f32 = final_log_probability.iter().sum();
+            let mean = sum / final_log_probability.len() as f32;
+            min_loss_for_each_cluster[index_of_max].1 += final_log_probability[index_of_max] / mean;
             min_loss_for_each_cluster[index_of_max].0 = index_of_max;
             assigned_vec[index_of_max] += 1;
         }
