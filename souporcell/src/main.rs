@@ -11,7 +11,7 @@ extern crate flate2;
 use flate2::read::MultiGzDecoder;
 use rayon::prelude::*;
 use rand::{Rng, rngs::StdRng, SeedableRng};
-use std::{f32, ffi::OsStr, fs::File, io::{BufRead, BufReader}, path::Path};
+use std::{f32, ffi::OsStr, fs::File, io::{BufRead, BufReader}, os::windows::thread, path::Path};
 use statrs::function::beta;
 use hashbrown::{HashMap,HashSet};
 use itertools::izip;
@@ -26,7 +26,7 @@ const TEMP: f32 = 0.5;
 const USE_KHM_VAR: i32 = 1; // (0: EM) (1: KHM) (2: KHM BETA)
 const P_DIM: f32 = 25.0;
 // for two shot
-const MIN_CELL_PER_CLUS: usize = 10;    // consider as assigned if more than this
+const MIN_CELL_PER_CLUS: usize = 50;    // consider as assigned if more than this
 const TWO_SHOT: bool = true;
 const TWO_SHOT_OVERCLUSTER_BY: usize = 5; // first run increase the cc count by
 const TWO_SHOT_REPLACE_PERCENT: usize = 20; // first replace outliers if target not reached replace randomly
@@ -48,7 +48,6 @@ struct ThreadData {
     thread_num: usize,
     max_clusters: usize,
     cluster_centers: Vec<Vec<f32>>,
-    lock_centers: Vec<usize>,
     replace_centers: Vec<usize>
 }
 
@@ -62,7 +61,6 @@ impl ThreadData {
             thread_num: thread_num,
             max_clusters: 0,
             cluster_centers: vec![],
-            lock_centers: vec![],
             replace_centers: vec![],
         }
     }
@@ -118,7 +116,6 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
     if TWO_SHOT {
         let mut assigned_vec: Vec<usize> = vec![0; num_clusters];
         let mut min_loss_for_each_cluster: Vec<(usize, f32)> = (0..num_clusters + TWO_SHOT_OVERCLUSTER_BY).map(|i| (i, 0.0)).collect();
-        let mut lock_clusters = vec![];
         let mut replace_clusters= vec![];
         // find the cluster which has lowest loss for each cell
         for final_log_probability in &best_log_probabilities {
@@ -133,9 +130,9 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
         // calculate iqr and stuff to find the outliers, 1.5 IQR from q1 and q3
         let q1_index = 1 * (min_loss_for_each_cluster.len() / 4);
         let q3_index = 3 * (min_loss_for_each_cluster.len() / 4);
-        let iqr_15 = 3 * (q3_index - q1_index) / 4;
-        let cutoff_1 = (q1_index as isize - iqr_15 as isize).max(0) as usize;
-        let cutoff_3 = (q3_index + iqr_15).min(min_loss_for_each_cluster.len());
+        let iqr_15 = 1.5 * (min_loss_for_each_cluster[q3_index].1 - min_loss_for_each_cluster[q1_index].1);
+        let cutoff_1 = min_loss_for_each_cluster[q1_index].1 - iqr_15;
+        let cutoff_3 = min_loss_for_each_cluster[q3_index].1 + iqr_15;
         // the cluster centers with less than MIN cells
         for (cc, assigned_cell_num) in assigned_vec.iter().enumerate() {
             if *assigned_cell_num < MIN_CELL_PER_CLUS {
@@ -146,10 +143,10 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
         // add all outliers and ones below MIN to replace cluster
         for (index, (cluster, loss)) in min_loss_for_each_cluster.iter().enumerate() {
             eprintln!("{}:\tcluster\t{}\tloss\t{}", index, cluster, loss);
-            if index < cutoff_1 && !replace_clusters.contains(&cluster) {
+            if loss < &cutoff_1 && !replace_clusters.contains(&cluster) {
                 replace_clusters.push(*cluster);
             }
-            else if index > cutoff_3 && !replace_clusters.contains(&cluster) {
+            else if loss > &cutoff_3 && !replace_clusters.contains(&cluster) {
                 replace_clusters.push(*cluster);
             }
         }
@@ -189,7 +186,6 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
         let mut threads: Vec<ThreadData> = Vec::new();
         for i in 0..params.threads {
             let mut temp_thread = ThreadData::from_seed(new_seed(&mut rng), solves_per_thread, i);
-            temp_thread.lock_centers = lock_clusters.clone();
             temp_thread.replace_centers = replace_clusters.clone();
             temp_thread.cluster_centers = best_cluster_centers.clone();
             threads.push(temp_thread);
@@ -197,13 +193,27 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
         threads.par_iter_mut().for_each(|thread_data| {
             for iteration in 0..thread_data.solves_per_thread {
                 // replace_cluster_centers, add more randomly if below threshold
-                let mut new_cluster_centers: Vec<Vec<f32>> = init_cluster_centers(loci_used, &cell_data, num_clusters, params, &mut thread_data.rng);
+                let mut replace_clusters = thread_data.replace_centers.clone();
+                while replace_clusters.len() < (best_cluster_centers.len() * TWO_SHOT_REPLACE_PERCENT) / 100 {
+                    let add_cluster = thread_data.rng.gen_range(0, num_clusters);
+                    if !replace_clusters.contains(&add_cluster) {
+                        replace_clusters.push(add_cluster);
+                    }
+                }
+                // add random lock clusters for the specified threshold
+                let mut lock_centers= vec![];
+                while lock_centers.len() < (best_cluster_centers.len() * TWO_SHOT_LOCK_PERCENT) / 100 {
+                    let add_cluster = thread_data.rng.gen_range(0, num_clusters);
+                    if !replace_clusters.contains(&add_cluster) && !lock_centers.contains(&add_cluster) {
+                        lock_centers.push(add_cluster);
+                    }
+                }
+                // replace the cluster centers with newly generated ones
+                let mut new_cluster_centers: Vec<Vec<f32>> = init_cluster_centers(loci_used, &cell_data, replace_clusters.len(), params, &mut thread_data.rng);
                 let mut prev_cluster_centers = thread_data.cluster_centers.clone();
-                for (index, replace_center) in thread_data.replace_centers.iter().enumerate() {
+                for (index, replace_center) in replace_clusters.iter().enumerate() {
                     prev_cluster_centers[*replace_center] = new_cluster_centers[index].clone();
                 }
-                // select lock centers not in replace cluster_centers until threshold
-                let lock_centers = thread_data.lock_centers.clone();
                 let (log_loss, log_probabilities, current_max);
                 // Main method
                 (log_loss, log_probabilities, current_max) = khm_temp_annealing(loci_used, &mut prev_cluster_centers, &cell_data , num_clusters, iteration, thread_data.thread_num, lock_centers);
