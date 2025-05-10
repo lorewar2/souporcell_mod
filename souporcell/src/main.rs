@@ -11,7 +11,7 @@ extern crate flate2;
 use flate2::read::MultiGzDecoder;
 use rayon::prelude::*;
 use rand::{Rng, rngs::StdRng, SeedableRng};
-use std::{f32, ffi::OsStr, fs::File, io::{BufRead, BufReader}, os::windows::thread, path::Path};
+use std::{f32, ffi::OsStr, fs::File, io::{BufRead, BufReader}, path::Path};
 use statrs::function::beta;
 use hashbrown::{HashMap,HashSet};
 use itertools::izip;
@@ -113,9 +113,6 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
             }
         }
     }
-    best_log_probability = f32::NEG_INFINITY;
-    best_log_probabilities = Vec::new();
-    best_clusters = 0;
     if TWO_SHOT {
         let mut assigned_vec: Vec<usize> = vec![0; num_clusters + TWO_SHOT_OVERCLUSTER_BY];
         let mut min_loss_for_each_cluster: Vec<(usize, f32)> = (0..num_clusters + TWO_SHOT_OVERCLUSTER_BY).map(|i| (i, 0.0)).collect();
@@ -186,6 +183,9 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
             .collect();
         eprintln!("replace clusters {:?}", replace_clusters);
         // rerun
+        best_log_probability = f32::NEG_INFINITY;
+        best_log_probabilities = Vec::new();
+        best_clusters = 0;
         let mut threads: Vec<ThreadData> = Vec::new();
         for i in 0..params.threads {
             let mut temp_thread = ThreadData::from_seed(new_seed(&mut rng), solves_per_thread, i);
