@@ -113,8 +113,11 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
             }
         }
     }
+    best_log_probability = f32::NEG_INFINITY;
+    best_log_probabilities = Vec::new();
+    best_clusters = 0;
     if TWO_SHOT {
-        let mut assigned_vec: Vec<usize> = vec![0; num_clusters];
+        let mut assigned_vec: Vec<usize> = vec![0; num_clusters + TWO_SHOT_OVERCLUSTER_BY];
         let mut min_loss_for_each_cluster: Vec<(usize, f32)> = (0..num_clusters + TWO_SHOT_OVERCLUSTER_BY).map(|i| (i, 0.0)).collect();
         let mut replace_clusters= vec![];
         // find the cluster which has lowest loss for each cell
@@ -126,7 +129,7 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
             min_loss_for_each_cluster[index_of_max].0 = index_of_max;
             assigned_vec[index_of_max] += 1;
         }
-        min_loss_for_each_cluster.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        min_loss_for_each_cluster.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         // calculate iqr and stuff to find the outliers, 1.5 IQR from q1 and q3
         let q1_index = 1 * (min_loss_for_each_cluster.len() / 4);
         let q3_index = 3 * (min_loss_for_each_cluster.len() / 4);
