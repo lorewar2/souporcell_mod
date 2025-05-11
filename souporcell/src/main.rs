@@ -115,14 +115,14 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
     }
     if TWO_SHOT {
         let mut assigned_vec: Vec<usize> = vec![0; num_clusters + TWO_SHOT_OVERCLUSTER_BY];
-        let mut min_loss_for_each_cluster: Vec<(usize, f32)> = (0..num_clusters + TWO_SHOT_OVERCLUSTER_BY).map(|i| (i, 0.0)).collect();
+        let mut min_loss_for_each_cluster: Vec<(usize, i32)> = (0..num_clusters + TWO_SHOT_OVERCLUSTER_BY).map(|i| (i, 0)).collect();
         let mut replace_clusters= vec![];
         // find the cluster which has lowest loss for each cell
         for final_log_probability in &best_log_probabilities {
             let index_of_max: usize = final_log_probability.iter().enumerate().max_by(|(_, a), (_, b)| a.total_cmp(b)).map(|(index, _)| index).unwrap();
             let sum: f32 = final_log_probability.iter().sum();
             let mean = sum / final_log_probability.len() as f32;
-            min_loss_for_each_cluster[index_of_max].1 += final_log_probability[index_of_max] / mean;
+            min_loss_for_each_cluster[index_of_max].1 += 1;
             min_loss_for_each_cluster[index_of_max].0 = index_of_max;
             assigned_vec[index_of_max] += 1;
         }
@@ -130,9 +130,10 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
         // calculate iqr and stuff to find the outliers, 1.5 IQR from q1 and q3
         let q1_index = 1 * (min_loss_for_each_cluster.len() / 4);
         let q3_index = 3 * (min_loss_for_each_cluster.len() / 4);
-        let iqr_15 = 1.5 * (min_loss_for_each_cluster[q3_index].1 - min_loss_for_each_cluster[q1_index].1);
+        let iqr_15 = 3 * (min_loss_for_each_cluster[q3_index].1 - min_loss_for_each_cluster[q1_index].1) / 2;
         let cutoff_1 = min_loss_for_each_cluster[q1_index].1 - iqr_15;
         let cutoff_3 = min_loss_for_each_cluster[q3_index].1 + iqr_15;
+        eprintln!("q1 {} q2 {} iqr15 {} cutoff1 {} cutoff2 {}", q1_index, q3_index, iqr_15, cutoff_1, cutoff_3);
         // the cluster centers with less than MIN cells
         for (cc, assigned_cell_num) in assigned_vec.iter().enumerate() {
             if *assigned_cell_num < MIN_CELL_PER_CLUS {
@@ -145,9 +146,11 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
             eprintln!("{}:\tcluster\t{}\tloss\t{}", index, cluster, loss);
             if loss < &cutoff_1 && !replace_clusters.contains(&cluster) {
                 replace_clusters.push(*cluster);
+                eprintln!("replace");
             }
             else if loss > &cutoff_3 && !replace_clusters.contains(&cluster) {
                 replace_clusters.push(*cluster);
+                eprintln!("replace");
             }
         }
         // delete some replace clusters until required cluster centers
@@ -211,6 +214,7 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
                         lock_centers.push(add_cluster);
                     }
                 }
+                eprintln!("Thread {} lock cluster {:?} replace clusters {:?}", thread_data.thread_num, lock_centers, replace_clusters);
                 // replace the cluster centers with newly generated ones
                 let mut new_cluster_centers: Vec<Vec<f32>> = init_cluster_centers(loci_used, &cell_data, replace_clusters.len(), params, &mut thread_data.rng);
                 let mut prev_cluster_centers = thread_data.cluster_centers.clone();
