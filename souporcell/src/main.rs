@@ -26,7 +26,7 @@ const TEMP: f32 = 0.5;
 const USE_KHM_VAR: i32 = 1; // (0: EM) (1: KHM) (2: KHM BETA)
 const P_DIM: f32 = 25.0;
 // for two shot
-const MIN_CELL_PER_CLUS: usize = 50;    // consider as assigned if more than this
+const MIN_CELL_PER_CLUS: usize = 200;    // consider as assigned if more than this
 const TWO_SHOT: bool = true;
 const TWO_SHOT_OVERCLUSTER_BY: usize = 5; // first run increase the cc count by
 const TWO_SHOT_REPLACE_PERCENT: usize = 20; // first replace outliers if target not reached replace randomly
@@ -127,13 +127,9 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
             assigned_vec[index_of_max] += 1;
         }
         min_loss_for_each_cluster.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        // calculate iqr and stuff to find the outliers, 1.5 IQR from q1 and q3
-        let q1_index = 1 * (min_loss_for_each_cluster.len() / 4);
-        let q3_index = 3 * (min_loss_for_each_cluster.len() / 4);
-        let iqr_15 = 3 * (min_loss_for_each_cluster[q3_index].1 - min_loss_for_each_cluster[q1_index].1) / 2;
-        let cutoff_1 = min_loss_for_each_cluster[q1_index].1 - iqr_15;
-        let cutoff_3 = min_loss_for_each_cluster[q3_index].1 + iqr_15;
-        eprintln!("q1 {} q2 {} iqr15 {} cutoff1 {} cutoff2 {}", q1_index, q3_index, iqr_15, cutoff_1, cutoff_3);
+        // outlier detection does not work (do first and fourth quater)
+        let cut_off_index_low = 1 * (min_loss_for_each_cluster.len() / 4);
+        let cut_off_index_high = 3 * (min_loss_for_each_cluster.len() / 4);
         // the cluster centers with less than MIN cells
         for (cc, assigned_cell_num) in assigned_vec.iter().enumerate() {
             if *assigned_cell_num < MIN_CELL_PER_CLUS {
@@ -144,11 +140,11 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
         // add all outliers and ones below MIN to replace cluster
         for (index, (cluster, loss)) in min_loss_for_each_cluster.iter().enumerate() {
             eprintln!("{}:\tcluster\t{}\tloss\t{}", index, cluster, loss);
-            if loss < &cutoff_1 && !replace_clusters.contains(&cluster) {
+            if index < cut_off_index_low && !replace_clusters.contains(&cluster) {
                 replace_clusters.push(*cluster);
                 eprintln!("replace");
             }
-            else if loss > &cutoff_3 && !replace_clusters.contains(&cluster) {
+            else if index > cut_off_index_high && !replace_clusters.contains(&cluster) {
                 replace_clusters.push(*cluster);
                 eprintln!("replace");
             }
@@ -212,6 +208,9 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
                     let add_cluster = thread_data.rng.gen_range(0, num_clusters);
                     if !replace_clusters.contains(&add_cluster) && !lock_centers.contains(&add_cluster) {
                         lock_centers.push(add_cluster);
+                    }
+                    if lock_centers.len() + replace_clusters.len() == num_clusters {
+                        break;
                     }
                 }
                 eprintln!("Thread {} lock cluster {:?} replace clusters {:?}", thread_data.thread_num, lock_centers, replace_clusters);
