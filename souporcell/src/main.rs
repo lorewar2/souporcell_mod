@@ -128,8 +128,8 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
         }
         min_loss_for_each_cluster.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         // outlier detection does not work (do first and fourth quater)
-        let cut_off_index_low = 1 * (min_loss_for_each_cluster.len() / 4);
-        let cut_off_index_high = 3 * (min_loss_for_each_cluster.len() / 4);
+        let cut_off_index_low = 1 * (min_loss_for_each_cluster.len() / 8);
+        let cut_off_index_high = 7 * (min_loss_for_each_cluster.len() / 8);
         // the cluster centers with less than MIN cells
         for (cc, assigned_cell_num) in assigned_vec.iter().enumerate() {
             if *assigned_cell_num < MIN_CELL_PER_CLUS {
@@ -137,16 +137,24 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
                 eprintln!("cluster with less than {} {}", MIN_CELL_PER_CLUS, cc);
             }
         }
+        // add the same amount from the other end
+        for add_index in 0..replace_clusters.len() {
+            replace_clusters.push(assigned_vec[assigned_vec.len() - add_index]);
+        }
         // add all outliers and ones below MIN to replace cluster
         for (index, (cluster, loss)) in min_loss_for_each_cluster.iter().enumerate() {
             eprintln!("{}:\tcluster\t{}\tloss\t{}", index, cluster, loss);
-            if index < cut_off_index_low && !replace_clusters.contains(&cluster) {
-                replace_clusters.push(*cluster);
-                eprintln!("replace");
+            if index < cut_off_index_low {
+                if !replace_clusters.contains(&cluster) {
+                    replace_clusters.push(*cluster);
+                }
+                eprint!(" outlier added");
             }
-            else if index > cut_off_index_high && !replace_clusters.contains(&cluster) {
-                replace_clusters.push(*cluster);
-                eprintln!("replace");
+            else if index > cut_off_index_high {
+                if !replace_clusters.contains(&cluster) {
+                    replace_clusters.push(*cluster);
+                }
+                eprint!(" outlier added");
             }
         }
         // delete some replace clusters until required cluster centers
