@@ -29,8 +29,9 @@ const P_DIM: f32 = 25.0;
 const MIN_CELL_PER_CLUS: usize = 200;    // consider as assigned if more than this
 const TWO_SHOT: bool = true;
 const TWO_SHOT_OVERCLUSTER_BY: usize = 5; // first run increase the cc count by
-const TWO_SHOT_REPLACE_PERCENT: usize = 20; // first replace outliers if target not reached replace randomly
-const TWO_SHOT_LOCK_PERCENT: usize = 50; // lock cc's randomly until target reached
+const TWO_SHOT_REPLACE_PERCENT: usize = 10; // first replace outliers if target not reached replace randomly
+const TWO_SHOT_LOCK_PERCENT: usize = 80; // lock cc's randomly until target reached
+const THREE_SHOT: bool = true;
 
 fn main() {
     let params = load_params();
@@ -138,12 +139,15 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
             }
         }
         // add the same amount from the other end
-        for add_index in 0..replace_clusters.len() {
-            replace_clusters.push(assigned_vec[assigned_vec.len() - add_index]);
+        for add_index in 0..min_loss_for_each_cluster.len() {
+            let temp = min_loss_for_each_cluster[min_loss_for_each_cluster.len() - add_index - 1].0;
+            if !replace_clusters.contains(&temp) && replace_clusters.len() < num_clusters {
+                replace_clusters.push(temp);
+            }
         }
         // add all outliers and ones below MIN to replace cluster
         for (index, (cluster, loss)) in min_loss_for_each_cluster.iter().enumerate() {
-            eprintln!("{}:\tcluster\t{}\tloss\t{}", index, cluster, loss);
+            eprint!("{}:\tcluster\t{}\tloss\t{}", index, cluster, loss);
             if index < cut_off_index_low {
                 if !replace_clusters.contains(&cluster) {
                     replace_clusters.push(*cluster);
@@ -156,6 +160,7 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
                 }
                 eprint!(" outlier added");
             }
+            eprintln!("");
         }
         // delete some replace clusters until required cluster centers
         let mut del_clusters: Vec<usize> = replace_clusters.choose_multiple(&mut rand::thread_rng(), TWO_SHOT_OVERCLUSTER_BY.min(replace_clusters.len())).cloned().collect();
@@ -236,6 +241,7 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
                         thread_data.best_total_log_probability = log_loss;
                         thread_data.best_log_probabilities = log_probabilities;
                         thread_data.max_clusters = current_max;
+                        thread_data.cluster_centers = prev_cluster_centers.clone();
                     }
                 }
                 eprintln!("thread {} iteration {} done with {}, best so far {} best clusters {}",
@@ -247,11 +253,163 @@ fn souporcell_main(loci_used: usize, cell_data: Vec<CellData>, params: &Params, 
                 best_clusters = thread_data.max_clusters;
                 best_log_probability = thread_data.best_total_log_probability;
                 best_log_probabilities = thread_data.best_log_probabilities;
+                best_cluster_centers = thread_data.cluster_centers.clone();
             }
             else if thread_data.max_clusters == best_clusters {
                 if thread_data.best_total_log_probability > best_log_probability {
                     best_log_probability = thread_data.best_total_log_probability;
                     best_log_probabilities = thread_data.best_log_probabilities;
+                    best_cluster_centers = thread_data.cluster_centers.clone();
+                }
+            }
+        }
+    }
+    if THREE_SHOT {
+        let mut assigned_vec: Vec<usize> = vec![0; num_clusters];
+        let mut min_loss_for_each_cluster: Vec<(usize, i32)> = (0..num_clusters).map(|i| (i, 0)).collect();
+        let mut replace_clusters= vec![];
+        // find the cluster which has lowest loss for each cell
+        for final_log_probability in &best_log_probabilities {
+            let index_of_max: usize = final_log_probability.iter().enumerate().max_by(|(_, a), (_, b)| a.total_cmp(b)).map(|(index, _)| index).unwrap();
+            let sum: f32 = final_log_probability.iter().sum();
+            let mean = sum / final_log_probability.len() as f32;
+            min_loss_for_each_cluster[index_of_max].1 += 1;
+            min_loss_for_each_cluster[index_of_max].0 = index_of_max;
+            assigned_vec[index_of_max] += 1;
+        }
+        min_loss_for_each_cluster.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        // outlier detection does not work (do first and fourth quater)
+        let cut_off_index_low = 1 * (min_loss_for_each_cluster.len() / 8);
+        let cut_off_index_high = 7 * (min_loss_for_each_cluster.len() / 8);
+        // the cluster centers with less than MIN cells
+        for (cc, assigned_cell_num) in assigned_vec.iter().enumerate() {
+            if *assigned_cell_num < MIN_CELL_PER_CLUS {
+                replace_clusters.push(cc);
+                eprintln!("cluster with less than {} {}", MIN_CELL_PER_CLUS, cc);
+            }
+        }
+        // add the same amount from the other end
+        for add_index in 0..min_loss_for_each_cluster.len() {
+            let temp = min_loss_for_each_cluster[min_loss_for_each_cluster.len() - add_index - 1].0;
+            if !replace_clusters.contains(&temp) && replace_clusters.len() < num_clusters {
+                replace_clusters.push(temp);
+            }
+        }
+        // add all outliers and ones below MIN to replace cluster
+        for (index, (cluster, loss)) in min_loss_for_each_cluster.iter().enumerate() {
+            eprint!("{}:\tcluster\t{}\tloss\t{}", index, cluster, loss);
+            if index < cut_off_index_low {
+                if !replace_clusters.contains(&cluster) {
+                    replace_clusters.push(*cluster);
+                }
+                eprint!(" outlier added");
+            }
+            else if index > cut_off_index_high {
+                if !replace_clusters.contains(&cluster) {
+                    replace_clusters.push(*cluster);
+                }
+                eprint!(" outlier added");
+            }
+            eprintln!("");
+        }
+        // delete some replace clusters until required cluster centers
+        let mut del_clusters: Vec<usize> = replace_clusters.choose_multiple(&mut rand::thread_rng(), TWO_SHOT_OVERCLUSTER_BY.min(replace_clusters.len())).cloned().collect();
+        // need more clusters to delete
+        let mut index = 0;
+        while del_clusters.len() < TWO_SHOT_OVERCLUSTER_BY {
+            if !replace_clusters.contains(&index) {
+                del_clusters.push(index);
+            }
+            index += 1;
+        }
+        // using del clusters and prev cc, delete the clusters and manage the replace clusters (shift)
+        del_clusters.sort_unstable_by(|a, b| b.cmp(a));
+
+        for &index in &del_clusters {
+            best_cluster_centers.remove(index);
+        }
+        let mut remap = Vec::with_capacity(best_cluster_centers.len() + del_clusters.len());
+        let mut deleted = del_clusters.into_iter().collect::<std::collections::HashSet<_>>();
+        let mut new_index = 0;
+        for old_index in 0..(best_cluster_centers.len() + deleted.len()) {
+            if deleted.contains(&old_index) {
+                remap.push(None);
+            } else {
+                remap.push(Some(new_index));
+                new_index += 1;
+            }
+        }
+        replace_clusters = replace_clusters
+            .into_iter()
+            .filter_map(|i| remap.get(i).cloned().flatten())
+            .collect();
+        eprintln!("replace clusters {:?}", replace_clusters);
+        // rerun
+        best_log_probability = f32::NEG_INFINITY;
+        best_log_probabilities = Vec::new();
+        best_clusters = 0;
+        let mut threads: Vec<ThreadData> = Vec::new();
+        for i in 0..params.threads {
+            let mut temp_thread = ThreadData::from_seed(new_seed(&mut rng), solves_per_thread, i);
+            temp_thread.replace_centers = replace_clusters.clone();
+            temp_thread.cluster_centers = best_cluster_centers.clone();
+            threads.push(temp_thread);
+        }
+        threads.par_iter_mut().for_each(|thread_data| {
+            for iteration in 0..thread_data.solves_per_thread {
+                // replace_cluster_centers, add more randomly if below threshold
+                let mut replace_clusters = thread_data.replace_centers.clone();
+                while replace_clusters.len() < (best_cluster_centers.len() * TWO_SHOT_REPLACE_PERCENT) / 100 {
+                    let add_cluster = thread_data.rng.gen_range(0, num_clusters);
+                    if !replace_clusters.contains(&add_cluster) {
+                        replace_clusters.push(add_cluster);
+                    }
+                }
+                // add random lock clusters for the specified threshold
+                let mut lock_centers= vec![];
+                while lock_centers.len() < (best_cluster_centers.len() * TWO_SHOT_LOCK_PERCENT) / 100 {
+                    let add_cluster = thread_data.rng.gen_range(0, num_clusters);
+                    if !replace_clusters.contains(&add_cluster) && !lock_centers.contains(&add_cluster) {
+                        lock_centers.push(add_cluster);
+                    }
+                    if lock_centers.len() + replace_clusters.len() == num_clusters {
+                        break;
+                    }
+                }
+                eprintln!("Thread {} lock cluster {:?} replace clusters {:?}", thread_data.thread_num, lock_centers, replace_clusters);
+                // replace the cluster centers with newly generated ones
+                let mut new_cluster_centers: Vec<Vec<f32>> = init_cluster_centers(loci_used, &cell_data, replace_clusters.len(), params, &mut thread_data.rng);
+                let mut prev_cluster_centers = thread_data.cluster_centers.clone();
+                for (index, replace_center) in replace_clusters.iter().enumerate() {
+                    prev_cluster_centers[*replace_center] = new_cluster_centers[index].clone();
+                }
+                let (log_loss, log_probabilities, current_max);
+                // Main method
+                (log_loss, log_probabilities, current_max) = khm_temp_annealing(loci_used, &mut prev_cluster_centers, &cell_data , num_clusters, iteration, thread_data.thread_num, lock_centers);
+                if current_max >= thread_data.max_clusters {
+                    if log_loss > thread_data.best_total_log_probability {
+                        thread_data.best_total_log_probability = log_loss;
+                        thread_data.best_log_probabilities = log_probabilities;
+                        thread_data.max_clusters = current_max;
+                        thread_data.cluster_centers = prev_cluster_centers.clone();
+                    }
+                }
+                eprintln!("thread {} iteration {} done with {}, best so far {} best clusters {}",
+                    thread_data.thread_num, iteration, log_loss, thread_data.best_total_log_probability, thread_data.max_clusters);
+            }
+        });
+        for thread_data in threads {
+            if thread_data.max_clusters > best_clusters {
+                best_clusters = thread_data.max_clusters;
+                best_log_probability = thread_data.best_total_log_probability;
+                best_log_probabilities = thread_data.best_log_probabilities;
+                best_cluster_centers = thread_data.cluster_centers.clone();
+            }
+            else if thread_data.max_clusters == best_clusters {
+                if thread_data.best_total_log_probability > best_log_probability {
+                    best_log_probability = thread_data.best_total_log_probability;
+                    best_log_probabilities = thread_data.best_log_probabilities;
+                    best_cluster_centers = thread_data.cluster_centers.clone();
                 }
             }
         }
